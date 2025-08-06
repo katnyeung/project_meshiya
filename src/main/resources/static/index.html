@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meshiya - Midnight Diner</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="container">
+        <!-- Three.js sprite-based scene will be rendered here -->
+        <div id="scene-container"></div>
+        
+        <!-- UI overlay -->
+        <div id="ui-overlay">
+            <!-- Welcome screen -->
+            <div id="welcome-screen" class="panel">
+                <h1>Welcome to Meshiya</h1>
+                <p>Enter your name to join the midnight diner</p>
+                <input type="text" id="username-input" placeholder="Your name..." maxlength="20">
+                <button id="enter-diner-btn">Enter Diner</button>
+            </div>
+            
+            <!-- Chat interface -->
+            <div id="chat-interface" class="panel hidden">
+                <div id="chat-messages"></div>
+                <div id="chat-input-container">
+                    <input type="text" id="chat-input" placeholder="Type your message..." maxlength="200">
+                    <button id="send-btn">Send</button>
+                </div>
+            </div>
+            
+            <!-- Seat selection -->
+            <div id="seat-controls" class="panel hidden">
+                <div id="seat-buttons">
+                    <button class="seat-btn" data-seat="1">Seat 1</button>
+                    <button class="seat-btn" data-seat="2">Seat 2</button>
+                    <button class="seat-btn" data-seat="3">Seat 3</button>
+                    <button class="seat-btn" data-seat="4">Seat 4</button>
+                    <button class="seat-btn" data-seat="5">Seat 5</button>
+                    <button class="seat-btn" data-seat="6">Seat 6</button>
+                    <button class="seat-btn" data-seat="7">Seat 7</button>
+                    <button class="seat-btn" data-seat="8">Seat 8</button>
+                </div>
+                <button id="leave-seat-btn" class="hidden">Leave Seat</button>
+            </div>
+            
+            <!-- Status display -->
+            <div id="status-display" class="panel hidden">
+                <div id="current-seat">Not seated</div>
+                <div id="connection-status">Connecting...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Three.js library for sprite-based 3D -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- SockJS and STOMP for WebSocket -->
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    
+    <!-- Application scripts -->
+    <script src="js/websocket-client.js"></script>
+    <script src="js/diner-scene.js"></script>
+    <script src="js/ui-manager.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

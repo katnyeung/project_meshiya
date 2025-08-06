@@ -1,0 +1,295 @@
+/* Meshiya Midnight Diner Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Arial', sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #e0e0e0;
+    overflow: hidden;
+}
+
+#container {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+}
+
+#scene-container {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+#ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 100;
+}
+
+.panel {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.8);
+    border: 2px solid #8b4513;
+    border-radius: 10px;
+    padding: 20px;
+    backdrop-filter: blur(5px);
+    pointer-events: auto;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Welcome Screen */
+#welcome-screen {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    min-width: 300px;
+}
+
+#welcome-screen h1 {
+    color: #ffd700;
+    margin-bottom: 20px;
+    font-size: 2em;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+#username-input {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0;
+    border: 1px solid #8b4513;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #e0e0e0;
+    font-size: 16px;
+}
+
+#username-input:focus {
+    outline: none;
+    border-color: #ffd700;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+}
+
+#enter-diner-btn {
+    padding: 12px 24px;
+    background: linear-gradient(45deg, #8b4513, #a0522d);
+    color: #ffd700;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    transition: all 0.3s ease;
+}
+
+#enter-diner-btn:hover {
+    background: linear-gradient(45deg, #a0522d, #8b4513);
+    box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);
+}
+
+/* Chat Interface */
+#chat-interface {
+    bottom: 20px;
+    left: 20px;
+    width: 400px;
+    height: 300px;
+    display: flex;
+    flex-direction: column;
+}
+
+#chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 5px;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.message {
+    margin-bottom: 8px;
+    padding: 5px 8px;
+    border-radius: 5px;
+}
+
+.message.system {
+    background: rgba(255, 215, 0, 0.2);
+    color: #ffd700;
+    font-style: italic;
+}
+
+.message.user {
+    background: rgba(139, 69, 19, 0.3);
+}
+
+.message.ai {
+    background: rgba(75, 0, 130, 0.3);
+    color: #dda0dd;
+}
+
+.message-sender {
+    font-weight: bold;
+    color: #ffd700;
+}
+
+#chat-input-container {
+    display: flex;
+    gap: 10px;
+}
+
+#chat-input {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #8b4513;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #e0e0e0;
+}
+
+#send-btn {
+    padding: 8px 16px;
+    background: #8b4513;
+    color: #ffd700;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+#send-btn:hover {
+    background: #a0522d;
+}
+
+/* Seat Controls */
+#seat-controls {
+    top: 20px;
+    right: 20px;
+    width: 200px;
+}
+
+#seat-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.seat-btn {
+    padding: 10px;
+    background: rgba(139, 69, 19, 0.6);
+    color: #e0e0e0;
+    border: 2px solid #8b4513;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.3s ease;
+}
+
+.seat-btn:hover {
+    background: rgba(139, 69, 19, 0.8);
+    box-shadow: 0 2px 10px rgba(255, 215, 0, 0.3);
+}
+
+.seat-btn.occupied {
+    background: rgba(139, 0, 0, 0.6);
+    border-color: #8b0000;
+    cursor: not-allowed;
+}
+
+.seat-btn.current {
+    background: rgba(0, 100, 0, 0.6);
+    border-color: #008000;
+    color: #90ee90;
+}
+
+#leave-seat-btn {
+    width: 100%;
+    padding: 10px;
+    background: #8b0000;
+    color: #ffd700;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+#leave-seat-btn:hover {
+    background: #a00000;
+}
+
+/* Status Display */
+#status-display {
+    top: 20px;
+    left: 20px;
+    font-size: 14px;
+}
+
+#current-seat {
+    margin-bottom: 10px;
+    color: #ffd700;
+    font-weight: bold;
+}
+
+#connection-status {
+    color: #90ee90;
+}
+
+#connection-status.disconnected {
+    color: #ff6b6b;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(139, 69, 19, 0.8);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(160, 82, 45, 0.8);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    #chat-interface {
+        width: calc(100vw - 40px);
+        height: 200px;
+    }
+    
+    #seat-controls {
+        width: 160px;
+    }
+    
+    #seat-buttons {
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+    }
+    
+    .seat-btn {
+        padding: 8px;
+        font-size: 12px;
+    }
+}
