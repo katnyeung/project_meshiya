@@ -57,20 +57,43 @@ public class LlmApiService {
      * Calls the configured LLM API with the given prompt
      */
     public String callLlm(String systemPrompt, String userPrompt) {
+        logger.info("=== LLM API CALL START ===");
+        logger.info("Provider: {}", aiProvider);
+        logger.info("Model: {}", getCurrentModel());
+        logger.info("System Prompt (length: {}): {}", systemPrompt.length(), 
+                   systemPrompt.length() > 500 ? systemPrompt.substring(0, 500) + "..." : systemPrompt);
+        logger.info("User Prompt (length: {}): {}", userPrompt.length(),
+                   userPrompt.length() > 1000 ? userPrompt.substring(0, 1000) + "..." : userPrompt);
+        
         try {
+            String response;
             switch (aiProvider.toLowerCase()) {
                 case "ollama":
-                    return callOllama(systemPrompt, userPrompt);
+                    response = callOllama(systemPrompt, userPrompt);
+                    break;
                 case "openai":
-                    return callOpenAi(systemPrompt, userPrompt);
+                    response = callOpenAi(systemPrompt, userPrompt);
+                    break;
                 case "anthropic":
-                    return callAnthropic(systemPrompt, userPrompt);
+                    response = callAnthropic(systemPrompt, userPrompt);
+                    break;
                 default:
                     logger.warn("Unknown AI provider: {}. Falling back to Ollama", aiProvider);
-                    return callOllama(systemPrompt, userPrompt);
+                    response = callOllama(systemPrompt, userPrompt);
+                    break;
             }
+            
+            logger.info("LLM Response (length: {}): {}", 
+                       response != null ? response.length() : 0,
+                       response != null && response.length() > 500 ? response.substring(0, 500) + "..." : response);
+            logger.info("=== LLM API CALL END ===");
+            
+            return response;
+            
         } catch (Exception e) {
-            logger.error("Error calling LLM API ({}): {}", aiProvider, e.getMessage());
+            logger.error("=== LLM API CALL FAILED ===");
+            logger.error("Error calling LLM API ({}): {}", aiProvider, e.getMessage(), e);
+            logger.error("=== LLM API CALL END ===");
             throw new RuntimeException("LLM API call failed", e);
         }
     }
@@ -79,7 +102,7 @@ public class LlmApiService {
      * Calls local Ollama API
      */
     private String callOllama(String systemPrompt, String userPrompt) {
-        logger.info("Calling Ollama API with model: {}", ollamaModel);
+        logger.info("Calling Ollama API with model: {} at URL: {}", ollamaModel, ollamaUrl);
         
         String fullPrompt = systemPrompt + "\n\n" + userPrompt;
         
@@ -100,6 +123,9 @@ public class LlmApiService {
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
         
         try {
+            logger.info("Sending request to Ollama: {}/api/generate", ollamaUrl);
+            logger.debug("Request payload: {}", objectMapper.writeValueAsString(request));
+            
             ResponseEntity<String> response = restTemplate.exchange(
                 ollamaUrl + "/api/generate",
                 HttpMethod.POST,
@@ -107,20 +133,28 @@ public class LlmApiService {
                 String.class
             );
             
+            logger.info("Ollama API response status: {}", response.getStatusCode());
+            logger.debug("Raw response body: {}", response.getBody());
+            
             if (response.getStatusCode().is2xxSuccessful()) {
                 JsonNode jsonResponse = objectMapper.readTree(response.getBody());
                 String responseText = jsonResponse.get("response").asText();
-                logger.debug("Ollama response: {}", responseText);
+                logger.info("Ollama extracted response: {}", responseText);
                 return responseText.trim();
             } else {
+                logger.error("Ollama API returned non-success status: {} with body: {}", 
+                           response.getStatusCode(), response.getBody());
                 throw new RuntimeException("Ollama API returned status: " + response.getStatusCode());
             }
         } catch (Exception e) {
-            logger.error("Failed to call Ollama API: {}", e.getMessage());
+            logger.error("Failed to call Ollama API: {} ({})", e.getMessage(), e.getClass().getSimpleName(), e);
             if (e.getMessage().contains("timeout") || e.getMessage().contains("SocketTimeout")) {
                 throw new RuntimeException("Ollama API timeout - check if service is running and responsive", e);
             }
-            throw new RuntimeException("Ollama API call failed", e);
+            if (e.getMessage().contains("Connection refused")) {
+                throw new RuntimeException("Cannot connect to Ollama at " + ollamaUrl + " - check if service is running", e);
+            }
+            throw new RuntimeException("Ollama API call failed: " + e.getMessage(), e);
         }
     }
     

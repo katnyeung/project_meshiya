@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 @Service
@@ -31,21 +32,22 @@ public class BartenderService {
         You are the Master of a late-night diner called "Meshiya" (Midnight Diner), inspired by the anime Shin'ya Shokudō.
         
         ## Your Character:
-        - A wise, quiet, observant man in his 50s who runs a small diner open from midnight to 7am
+        - A wise, observant man in his 50s who runs a small diner open from midnight to 7am
         - You've seen countless late-night stories and human dramas unfold at your counter
-        - You listen more than you speak, but when you do speak, your words carry weight
+        - You're a good conversationalist who engages naturally with customers
         - You create a safe, non-judgmental space where people can be themselves
         - You have a gentle, paternal presence that puts people at ease
         - You prepare food and drinks with care and attention
+        - You enjoy the human connection that comes with late-night conversations
         
         ## Your Response Style:
-        - Keep responses SHORT (1-2 sentences maximum)
-        - Sometimes respond with just empathetic sounds: "Mm.", "Ah.", "I see."
-        - Ask gentle, probing questions that help people reflect
-        - Make simple observations about human nature or life
-        - Reference the late hour, the atmosphere, or the comfort of simple food
-        - Never preach or give direct advice - help people find their own answers
-        - Show understanding through few but meaningful words
+        - Respond naturally and conversationally (2-4 sentences is fine)
+        - Engage with customers in a warm, genuine way
+        - Ask thoughtful questions that show you're listening and care
+        - Share brief observations about life, food, or human nature when appropriate
+        - Reference the late hour, the atmosphere, or the comfort of simple food naturally
+        - Be supportive without preaching - guide people to their own insights
+        - Use occasional brief responses like "Mm." only when they truly fit the moment
         
         ## Menu and Ordering:
         - When customers ask about the menu, briefly describe available items
@@ -74,15 +76,17 @@ public class BartenderService {
         - Help with menu questions and orders naturally
         
         ## Example Response Patterns:
-        - "What does your heart tell you?"
-        - "The night has a way of making things clearer."
-        - "Sometimes the simplest food feeds more than the stomach."
-        - "Mm. People find their way here when they need to."
-        - "What calls to you tonight?" (when asked about menu)
-        - "I'll prepare that for you." (when taking orders)
-        - "*nods while polishing a glass*"
+        - "What does your heart tell you? Sometimes we know the answer but need to hear ourselves say it."
+        - "The night has a way of making things clearer. I've seen many people find their path at this counter."
+        - "Sometimes the simplest food feeds more than the stomach. A warm bowl can heal more than just hunger."
+        - "People find their way here when they need to. What brought you in tonight?"
+        - "What calls to you tonight? I have warm tea, hearty ramen, or something stronger if you prefer."
+        - "I'll prepare that for you. It's one of my favorites to make - the smell always fills the diner nicely."
+        - "*nods while polishing a glass* You know, I've heard that story before. Different faces, same human struggles."
+        - "Interesting perspective. How long have you been thinking about this?"
+        - "The late hours do something to us, don't they? Strip away the pretenses we carry during the day."
         
-        Remember: You are not a therapist or advice-giver. You are a wise observer who creates space for people to process their thoughts and feelings while serving comforting food and drinks.
+        Remember: You are not a therapist, but you are someone who genuinely cares about the people who come to your diner. You've heard countless stories and learned that sometimes people just need someone to listen and engage with them genuinely.
         """;
     
     
@@ -94,7 +98,14 @@ public class BartenderService {
             return Optional.empty();
         }
         
-        logger.info("Generating Master response for {} messages", messages.size());
+        logger.info("=== GENERATING MASTER RESPONSE ===");
+        logger.info("Processing {} messages for Master response", messages.size());
+        
+        // Log the messages being processed
+        for (int i = 0; i < messages.size(); i++) {
+            ChatMessage msg = messages.get(i);
+            logger.info("Message {}: [{}] {}: {}", i+1, msg.getType(), msg.getUserName(), msg.getContent());
+        }
         
         try {
             // Check for menu or ordering requests first
@@ -119,11 +130,13 @@ public class BartenderService {
             if (response != null && !response.trim().isEmpty()) {
                 response = cleanLlmResponse(response.trim());
                 
-                // Check if LLM decided not to respond
-                if (response.equalsIgnoreCase("SILENCE") || 
-                    response.toLowerCase().contains("silence")) {
-                    logger.info("LLM decided Master should remain silent");
-                    return Optional.empty();
+                // Only stay silent for very specific cases - be more responsive
+                if (response.equalsIgnoreCase("SILENCE")) {
+                    logger.info("LLM explicitly chose silence - using fallback instead");
+                    response = generateContextualFallback(messages);
+                    if (response == null) {
+                        return Optional.empty();
+                    }
                 }
                 
                 // Filter out non-responses
@@ -144,7 +157,7 @@ public class BartenderService {
     }
     
     /**
-     * Builds conversation context from messages
+     * Builds conversation context from messages including order states
      */
     private String buildConversationContext(List<ChatMessage> messages) {
         StringBuilder context = new StringBuilder();
@@ -152,6 +165,36 @@ public class BartenderService {
         String currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
         context.append("Time: ").append(currentTime).append(" (late night)\n");
         context.append("Location: Meshiya Midnight Diner\n\n");
+        
+        // Add customer order states
+        Set<String> customers = new HashSet<>();
+        for (ChatMessage msg : messages) {
+            if (!"ai_master".equals(msg.getUserId())) {
+                customers.add(msg.getUserId());
+            }
+        }
+        
+        if (!customers.isEmpty()) {
+            context.append("Customer Order Status:\n");
+            for (String userId : customers) {
+                Optional<Order> currentOrder = orderService.getUserCurrentOrder(userId);
+                String userName = messages.stream()
+                    .filter(msg -> userId.equals(msg.getUserId()))
+                    .findFirst()
+                    .map(ChatMessage::getUserName)
+                    .orElse("Customer");
+                
+                if (currentOrder.isPresent()) {
+                    Order order = currentOrder.get();
+                    context.append("- ").append(userName).append(": ")
+                           .append(order.getMenuItem().getName())
+                           .append(" (").append(order.getStatus().name().toLowerCase()).append(")\n");
+                } else {
+                    context.append("- ").append(userName).append(": no current order\n");
+                }
+            }
+            context.append("\n");
+        }
         
         context.append("Recent conversation:\n");
         for (ChatMessage msg : messages) {
@@ -170,18 +213,15 @@ public class BartenderService {
                "## Current Situation:\n" + 
                conversationContext + 
                "\n\n## Instructions:\n" +
-               "Analyze the conversation above. Decide if the Master should respond based on:\n" +
-               "- Are people addressing the Master directly?\n" +
-               "- Is someone expressing emotions or seeking comfort?\n" +
-               "- Are there meaningful questions or requests for advice?\n" +
-               "- Would a wise, quiet bartender naturally say something here?\n" +
-               "- Has enough conversation happened to warrant a response?\n\n" +
-               "If you decide the Master should respond:\n" +
-               "- Keep it very brief (1-2 sentences maximum)\n" +
-               "- Make it meaningful and in character\n" +
-               "- Show understanding without being preachy\n\n" +
-               "If the Master shouldn't respond (not enough context, too soon, nothing meaningful to add):\n" +
-               "- Simply respond with: SILENCE\n\n" +
+               "You are the Master responding to this conversation. As the wise, conversational Master of this midnight diner:\n" +
+               "- Engage naturally with customers - you enjoy these late-night conversations\n" +
+               "- Respond with 2-4 sentences that show genuine interest and care\n" +
+               "- Show the Master's observant, empathetic nature through thoughtful responses\n" +
+               "- Ask follow-up questions that show you're listening and want to understand\n" +
+               "- Share brief observations about life, human nature, or your experiences running the diner\n" +
+               "- Reference the late night atmosphere, food, or drink naturally when it fits\n" +
+               "- Be warm and engaging while maintaining your gentle, wise character\n\n" +
+               "IMPORTANT: Do not include thinking blocks or analysis. Respond directly as the Master would speak.\n\n" +
                "Master:";
     }
     
@@ -190,15 +230,22 @@ public class BartenderService {
      */
     private String callLLMOrFallback(String prompt, List<ChatMessage> messages) {
         try {
+            logger.info("=== BARTENDER SERVICE LLM CALL ===");
             logger.info("Calling LLM API via LlmApiService (provider: {})", 
                        llmApiService.getCurrentProvider());
             
             // Extract user prompt from full prompt (everything after system prompt)
             String userPrompt = extractUserPromptFromFullPrompt(prompt);
             
+            logger.info("Full prompt being sent to LLM (length: {}): \n{}", 
+                       prompt.length(), prompt.length() > 2000 ? prompt.substring(0, 2000) + "..." : prompt);
+            logger.info("Extracted user prompt (length: {}): \n{}", 
+                       userPrompt.length(), userPrompt.length() > 1500 ? userPrompt.substring(0, 1500) + "..." : userPrompt);
+            
             String response = llmApiService.callLlm(SYSTEM_PROMPT, userPrompt);
             
             if (response != null && !response.trim().isEmpty()) {
+                logger.info("LLM returned valid response: {}", response);
                 return response;
             } else {
                 logger.warn("LLM returned empty response, falling back to contextual response");
@@ -206,7 +253,8 @@ public class BartenderService {
             }
             
         } catch (Exception e) {
-            logger.error("LLM API call failed, falling back to contextual response: {}", e.getMessage());
+            logger.error("LLM API call failed, falling back to contextual response: {} ({})", 
+                        e.getMessage(), e.getClass().getSimpleName(), e);
             return generateContextualFallback(messages);
         }
     }
@@ -243,8 +291,8 @@ public class BartenderService {
         }
         String content = allContent.toString();
         
-        // Sometimes choose not to respond (simulate LLM decision)
-        if (Math.random() < 0.4) { // 40% chance of silence
+        // Reduce silence probability - Master should be more conversational
+        if (Math.random() < 0.05) { // Only 5% chance of silence - Master enjoys conversation
             logger.info("Fallback decided Master should remain silent");
             return null;
         }
@@ -252,68 +300,127 @@ public class BartenderService {
         // Context-based responses
         if (content.contains("food") || content.contains("eat") || content.contains("hungry") || content.contains("menu")) {
             return chooseRandom(Arrays.asList(
-                "The simplest dishes often comfort the most.",
-                "What calls to you tonight?",
-                "Food tastes different in the quiet hours."
+                "The simplest dishes often comfort the most. I've found that good food has a way of making difficult conversations easier.",
+                "What calls to you tonight? I have some excellent miso ramen that's perfect for these late hours.",
+                "Food tastes different in the quiet hours, doesn't it? There's something about eating slowly, savoring each bite when the world is still.",
+                "Hunger comes in many forms. Sometimes we need nourishment for the body, sometimes for the soul."
             ));
         }
         
         if (content.contains("drink") || content.contains("beer") || content.contains("sake") || content.contains("tea")) {
             return chooseRandom(Arrays.asList(
-                "Something warm for the soul?",
-                "The right drink finds you when needed.",
-                "*slides a glass across the counter*"
+                "Something warm for the soul? Tea has a way of settling both the mind and the moment.",
+                "The right drink finds you when needed. What would suit your mood tonight?",
+                "I find that sharing a drink makes conversations flow more naturally. What draws you to the bottle tonight?",
+                "*slides a glass across the counter* Sometimes a drink is just an excuse to sit a while longer."
             ));
         }
         
         if (content.contains("work") || content.contains("job") || content.contains("office") || content.contains("boss")) {
             return chooseRandom(Arrays.asList(
-                "Work follows us even into the night.",
-                "What matters most to you?",
-                "The diner is far from all that."
+                "Work follows us even into the night, doesn't it? I see many people carrying their office troubles to this counter.",
+                "What matters most to you beyond the paycheck? Sometimes we lose sight of that in the daily grind.",
+                "The diner is far from all that workplace stress. How long has this been weighing on you?",
+                "I've served countless office workers over the years. The stories are different, but the exhaustion is always the same."
             ));
         }
         
         if (content.contains("love") || content.contains("relationship") || content.contains("girlfriend") || content.contains("boyfriend")) {
             return chooseRandom(Arrays.asList(
-                "The heart knows what it needs.",
-                "Love is like cooking - timing matters.",
-                "What would you do if fear wasn't a factor?"
+                "The heart knows what it needs, even when the mind tries to argue otherwise. What does yours tell you?",
+                "Love is like cooking - timing matters, but so does the quality of the ingredients you bring to it.",
+                "What would you do if fear wasn't a factor? Sometimes that's the clearest way to see our path forward.",
+                "Relationship troubles? I've heard every variation at this counter. The situations change, but human hearts remain remarkably similar."
             ));
         }
         
         if (content.contains("tired") || content.contains("sleep") || content.contains("late") || content.contains("night")) {
             return chooseRandom(Arrays.asList(
-                "The night holds what the day cannot.",
-                "Rest comes to those who seek it.",
-                "Late hours reveal our truest selves."
+                "The night holds what the day cannot - a different kind of clarity, a quieter truth. Is that what brought you here?",
+                "Rest comes to those who seek it, but sometimes we need to work through something first. What's keeping your mind awake?",
+                "Late hours reveal our truest selves, don't they? Without the day's distractions, we face what we really think and feel.",
+                "I've kept these late hours for decades. There's something honest about the deep night that draws certain people."
             ));
         }
         
         if (content.contains("sad") || content.contains("lonely") || content.contains("alone") || content.contains("depressed")) {
             return chooseRandom(Arrays.asList(
-                "You're not alone in this place.",
-                "Sadness passes like the night.",
-                "What brings you here tonight?"
+                "You're not alone in this place. I've seen that particular sadness before - it's more common than people realize.",
+                "Sadness passes like the night, but it needs its time to flow through us properly. What's behind yours?",
+                "What brings you here tonight? Sometimes talking to someone who's heard it all can help lighten the load.",
+                "Loneliness has a way of driving people to places like this. But connection can happen in the most unexpected moments."
             ));
         }
         
         if (content.contains("problem") || content.contains("trouble") || content.contains("difficult") || content.contains("help")) {
             return chooseRandom(Arrays.asList(
-                "The answer often hides in the question.",
-                "What would you tell a friend?",
-                "Sometimes we already know what to do."
+                "The answer often hides in the question itself. What do you think your instincts are telling you?",
+                "What would you tell a friend in your situation? Sometimes we give better advice than we follow.",
+                "Sometimes we already know what to do, but need someone to listen while we work through it. Tell me more.",
+                "Problems have a way of feeling overwhelming in the dark hours. But breaking them down, piece by piece, can help."
             ));
         }
         
-        // General conversation responses
+        // Check for positive reactions to food/drinks
+        if (content.contains("good") || content.contains("delicious") || content.contains("great") || 
+            content.contains("nice") || content.contains("perfect") || content.contains("excellent")) {
+            // If user has an order, assume they're talking about it
+            ChatMessage lastMessage = messages.get(messages.size() - 1);
+            String userId = lastMessage.getUserId();
+            if (userId != null && !"ai_master".equals(userId)) {
+                Optional<Order> userOrder = orderService.getUserCurrentOrder(userId);
+                if (userOrder.isPresent()) {
+                    return chooseRandom(Arrays.asList(
+                        "*nods approvingly*",
+                        "Good food feeds more than the stomach.",
+                        "The simple pleasures matter most.",
+                        "*continues work with a slight smile*"
+                    ));
+                }
+            }
+        }
+        
+        // Check if any customers have ready orders and reference them
+        ChatMessage lastMessage = messages.get(messages.size() - 1);
+        String userId = lastMessage.getUserId();
+        if (userId != null && !"ai_master".equals(userId)) {
+            Optional<Order> userOrder = orderService.getUserCurrentOrder(userId);
+            if (userOrder.isPresent() && userOrder.get().getStatus() == OrderStatus.SERVED) {
+                return chooseRandom(Arrays.asList(
+                    "How is your " + userOrder.get().getMenuItem().getName() + "?",
+                    "*watches you enjoy the " + userOrder.get().getMenuItem().getName() + "*",
+                    "The " + userOrder.get().getMenuItem().getName() + " suits you."
+                ));
+            }
+        }
+        
+        // Handle unclear or random messages with gentle Master responses
+        if (content.matches(".*[a-z]{4,}.*") && !content.matches(".*\\s.*")) {
+            // Looks like random text or typos
+            return chooseRandom(Arrays.asList(
+                "Sometimes words escape us in the late hours, don't they? The mind moves faster than the fingers.",
+                "The mind wanders when the night grows deep. Are you trying to say something specific?",
+                "*looks up with understanding eyes* Take your time. There's no rush here.",
+                "What weighs on you tonight? Sometimes it helps to start with whatever's on top.",
+                "Even silence speaks here, but I sense you have something more to share when you're ready."
+            ));
+        }
+        
+        // General conversation responses - more varied and conversational
         return chooseRandom(Arrays.asList(
-            "Mm.",
-            "The night brings many stories.",
-            "Such is life in the quiet hours.",
-            "*nods while cleaning a glass*",
-            "I see.",
-            "People find their way here when they need to."
+            "The night brings many stories to this counter. Each one different, but somehow familiar.",
+            "Such is life in the quiet hours - we show our truest selves when the world isn't watching.",
+            "*nods while cleaning a glass* I've heard that tone before. What's really on your mind?",
+            "People find their way here when they need to talk, or just be understood. Which is it for you tonight?",
+            "The diner holds many secrets, but it also keeps them safe. You can speak freely here.",
+            "What brings you to the counter tonight? There's usually a reason when someone ventures out this late.",
+            "Sometimes we all need a place to sit and think without judgment. You've found the right spot.",
+            "*glances up briefly, then back to work* You know, I can tell when someone has something weighing on them.",
+            "The late hours reveal much about us - our fears, our hopes, our real priorities. What are yours revealing?",
+            "A cup of tea, perhaps? Or would you prefer something stronger? Either way, I'm here to listen.",
+            "Interesting. Tell me more about that.",
+            "I've been running this place for years, and certain conversations never get old. What's your story?",
+            "The quiet hours have their own rhythm, don't they? Perfect for the kind of talk that matters."
         ));
     }
     
@@ -416,6 +523,8 @@ public class BartenderService {
             return response;
         }
         
+        logger.debug("Cleaning LLM response: {}", response);
+        
         // Remove thinking blocks like <think>...</think>
         response = response.replaceAll("(?s)<think>.*?</think>", "").trim();
         
@@ -423,11 +532,20 @@ public class BartenderService {
         response = response.replaceAll("(?s)<thinking>.*?</thinking>", "").trim();
         response = response.replaceAll("(?s)\\(thinking.*?\\)", "").trim();
         
+        // Remove analysis blocks or explanatory text
+        response = response.replaceAll("(?s)Analysis:.*?(?=\\n\\n|$)", "").trim();
+        response = response.replaceAll("(?s)Reasoning:.*?(?=\\n\\n|$)", "").trim();
+        
+        // Remove any "Master:" prefix if it appears
+        response = response.replaceAll("^Master:\\s*", "").trim();
+        
         // Remove any leading/trailing quotes that might wrap the response
         response = response.replaceAll("^[\"']|[\"']$", "").trim();
         
         // Clean up any double spaces or line breaks
         response = response.replaceAll("\\s+", " ").trim();
+        
+        logger.debug("Cleaned LLM response: {}", response);
         
         return response;
     }

@@ -37,7 +37,7 @@ public class RoomService {
     }
     
     /**
-     * Initialize Room1 at startup
+     * Initialize Room1 at startup - always ensures room exists
      */
     public void initializeRoom1() {
         String roomId = "room1";
@@ -59,8 +59,25 @@ public class RoomService {
             
             logger.info("Initialized Room1 with Master welcome message");
         } else {
-            logger.info("Room1 already exists with {} messages and {} occupied seats", 
-                       room.getMessages().size(), room.getSeatOccupancy().size());
+            // Verify room is actually valid and accessible
+            try {
+                room.getMessages(); // Test access
+                logger.info("Room1 already exists with {} messages and {} occupied seats", 
+                           room.getMessages().size(), room.getSeatOccupancy().size());
+            } catch (Exception e) {
+                logger.warn("Room1 exists but is corrupted, reinitializing: {}", e.getMessage());
+                // Reinitialize corrupted room
+                room = new Room(roomId, "Midnight Diner - Main Room");
+                ChatMessage welcomeMessage = new ChatMessage();
+                welcomeMessage.setType(MessageType.AI_MESSAGE);
+                welcomeMessage.setUserName("Master");
+                welcomeMessage.setUserId("master");
+                welcomeMessage.setContent("Welcome to my midnight diner. The night is long, and there's always time for a good conversation.");
+                welcomeMessage.setTimestamp(LocalDateTime.now());
+                room.addMessage(welcomeMessage);
+                saveRoom(room);
+                logger.info("Reinitialized corrupted Room1");
+            }
         }
     }
     
@@ -93,10 +110,21 @@ public class RoomService {
     }
     
     /**
-     * Add message to room and broadcast
+     * Add message to room and broadcast - creates room if it doesn't exist
      */
     public void addMessageToRoom(String roomId, ChatMessage message) {
         Room room = getRoom(roomId);
+        if (room == null) {
+            logger.warn("Room {} does not exist, initializing it", roomId);
+            if ("room1".equals(roomId)) {
+                initializeRoom1();
+                room = getRoom(roomId);
+            } else {
+                logger.error("Cannot auto-create room other than room1: {}", roomId);
+                return;
+            }
+        }
+        
         if (room != null) {
             room.addMessage(message);
             saveRoom(room);
@@ -104,18 +132,27 @@ public class RoomService {
             // Broadcast to all users in the room
             messagingTemplate.convertAndSend("/topic/room/" + roomId, message);
             logger.info("Added message to {} and broadcast: {}", roomId, message.getContent());
-        } else {
-            logger.warn("Cannot add message to non-existent room: {}", roomId);
         }
     }
     
     /**
-     * Join seat in room
+     * Join seat in room - creates room if it doesn't exist
      */
     public boolean joinSeat(String roomId, Integer seatId, String userId) {
         Room room = getRoom(roomId);
         if (room == null) {
-            logger.warn("Cannot join seat in non-existent room: {}", roomId);
+            logger.warn("Room {} does not exist for seat join, initializing it", roomId);
+            if ("room1".equals(roomId)) {
+                initializeRoom1();
+                room = getRoom(roomId);
+            } else {
+                logger.error("Cannot auto-create room other than room1: {}", roomId);
+                return false;
+            }
+        }
+        
+        if (room == null) {
+            logger.error("Failed to initialize room {}", roomId);
             return false;
         }
         
@@ -191,12 +228,23 @@ public class RoomService {
     }
     
     /**
-     * Send initial room state to a user
+     * Send initial room state to a user - creates room if it doesn't exist
      */
     public void sendInitialRoomState(String roomId, String userId) {
         Room room = getRoom(roomId);
         if (room == null) {
-            logger.warn("Cannot send initial state for non-existent room: {}", roomId);
+            logger.warn("Room {} does not exist for initial state, initializing it", roomId);
+            if ("room1".equals(roomId)) {
+                initializeRoom1();
+                room = getRoom(roomId);
+            } else {
+                logger.error("Cannot auto-create room other than room1: {}", roomId);
+                return;
+            }
+        }
+        
+        if (room == null) {
+            logger.error("Failed to initialize room {} for initial state", roomId);
             return;
         }
         

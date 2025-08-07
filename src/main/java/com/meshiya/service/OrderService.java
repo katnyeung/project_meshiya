@@ -25,10 +25,13 @@ public class OrderService {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
     
+    @Autowired
+    private RoomService roomService;
+    
     // Order queue management
     private final Queue<Order> orderQueue = new ConcurrentLinkedQueue<>();
     private final Map<String, Order> activeOrders = new ConcurrentHashMap<>();
-    private final Map<String, String> userCurrentOrders = new ConcurrentHashMap<>(); // userId -> orderId
+    private final Map<String, Set<String>> userCurrentOrders = new ConcurrentHashMap<>(); // userId -> Set<orderId>
     
     // Master state
     private boolean masterBusy = false;
@@ -38,11 +41,7 @@ public class OrderService {
      * Places a new order
      */
     public synchronized boolean placeOrder(String userId, String userName, String itemId, Integer seatId) {
-        // Check if user already has an active order
-        if (userCurrentOrders.containsKey(userId)) {
-            logger.debug("User {} already has an active order", userName);
-            return false;
-        }
+        // Allow multiple orders per user (drinks + food combinations are common)
         
         Optional<MenuItem> menuItem = menuService.getMenuItem(itemId);
         if (!menuItem.isPresent()) {
@@ -55,25 +54,43 @@ public class OrderService {
         
         orderQueue.offer(order);
         activeOrders.put(orderId, order);
-        userCurrentOrders.put(userId, orderId);
+        userCurrentOrders.computeIfAbsent(userId, k -> new HashSet<>()).add(orderId);
         
         logger.info("Order placed: {} ordered {}", userName, menuItem.get().getName());
         
-        // Send confirmation message
-        sendOrderConfirmation(order);
+        // Don't send automatic confirmation here - let BartenderService handle it
         
         return true;
     }
     
     /**
-     * Gets user's current order
+     * Gets user's current order (most recent if multiple)
      */
     public Optional<Order> getUserCurrentOrder(String userId) {
-        String orderId = userCurrentOrders.get(userId);
-        if (orderId != null) {
-            return Optional.ofNullable(activeOrders.get(orderId));
+        Set<String> orderIds = userCurrentOrders.get(userId);
+        if (orderIds != null && !orderIds.isEmpty()) {
+            // Return the most recent order (last added to active orders)
+            return orderIds.stream()
+                .map(activeOrders::get)
+                .filter(Objects::nonNull)
+                .max(Comparator.comparing(Order::getOrderTime));
         }
         return Optional.empty();
+    }
+    
+    /**
+     * Gets all current orders for a user
+     */
+    public List<Order> getUserCurrentOrders(String userId) {
+        Set<String> orderIds = userCurrentOrders.get(userId);
+        if (orderIds != null) {
+            return orderIds.stream()
+                .map(activeOrders::get)
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(Order::getOrderTime))
+                .collect(java.util.stream.Collectors.toList());
+        }
+        return new ArrayList<>();
     }
     
     /**
@@ -110,9 +127,9 @@ public class OrderService {
         logger.info("Master started preparing: {} for {}", 
                    order.getMenuItem().getName(), order.getUserName());
         
-        // Send preparation message
-        sendMasterMessage(String.format("*begins preparing %s for %s*", 
-                                       order.getMenuItem().getName(), order.getUserName()));
+        // Send preparation message to chat
+        String preparingMessage = String.format("*begins preparing %s*", order.getMenuItem().getName());
+        sendMasterChatMessage(preparingMessage);
         
         // Update visual state (placeholder for now)
         updateMasterVisualState("preparing", order.getMenuItem().getType().name().toLowerCase());
@@ -129,10 +146,11 @@ public class OrderService {
                    currentlyPreparing.getMenuItem().getName(), 
                    currentlyPreparing.getUserName());
         
-        // Send ready message
-        sendMasterMessage(String.format("*slides %s across the counter to %s*", 
-                                       currentlyPreparing.getMenuItem().getName(), 
-                                       currentlyPreparing.getUserName()));
+        // Send ready message to chat room
+        String readyMessage = String.format("%s, your %s is ready. *slides it across the counter*", 
+                                           currentlyPreparing.getUserName(),
+                                           currentlyPreparing.getMenuItem().getName());
+        sendMasterChatMessage(readyMessage);
         
         // Automatically serve the order
         serveOrder(currentlyPreparing);
@@ -165,9 +183,9 @@ public class OrderService {
     /**
      * Completes an order when customer finishes eating/drinking
      */
-    public synchronized void completeOrder(String userId) {
-        String orderId = userCurrentOrders.get(userId);
-        if (orderId != null) {
+    public synchronized void completeOrder(String userId, String orderId) {
+        Set<String> orderIds = userCurrentOrders.get(userId);
+        if (orderIds != null && orderIds.contains(orderId)) {
             Order order = activeOrders.get(orderId);
             if (order != null) {
                 order.setStatus(OrderStatus.CONSUMING);
@@ -178,6 +196,16 @@ public class OrderService {
                 
                 logger.info("Order completed: {} by {}", order.getMenuItem().getName(), order.getUserName());
             }
+        }
+    }
+    
+    /**
+     * Completes most recent order for backwards compatibility
+     */
+    public synchronized void completeOrder(String userId) {
+        Optional<Order> currentOrder = getUserCurrentOrder(userId);
+        if (currentOrder.isPresent()) {
+            completeOrder(userId, currentOrder.get().getOrderId());
         }
     }
     
@@ -200,7 +228,14 @@ public class OrderService {
     private synchronized void cleanupOrder(String orderId) {
         Order order = activeOrders.remove(orderId);
         if (order != null) {
-            userCurrentOrders.remove(order.getUserId());
+            Set<String> userOrders = userCurrentOrders.get(order.getUserId());
+            if (userOrders != null) {
+                userOrders.remove(orderId);
+                // Remove empty set to keep map clean
+                if (userOrders.isEmpty()) {
+                    userCurrentOrders.remove(order.getUserId());
+                }
+            }
             logger.debug("Cleaned up order: {}", orderId);
         }
     }
@@ -227,7 +262,24 @@ public class OrderService {
     }
     
     /**
-     * Sends master message to all clients
+     * Sends master message to all clients via chat room
+     */
+    private void sendMasterChatMessage(String message) {
+        ChatMessage masterMessage = new ChatMessage();
+        masterMessage.setType(MessageType.AI_MESSAGE);
+        masterMessage.setContent(message);
+        masterMessage.setUserName("Master");
+        masterMessage.setUserId("ai_master");
+        masterMessage.setRoomId("room1");
+        masterMessage.setTimestamp(LocalDateTime.now());
+        
+        // Add to room and broadcast through room service
+        roomService.addMessageToRoom("room1", masterMessage);
+        logger.info("Master chat message sent: {}", message);
+    }
+    
+    /**
+     * Sends direct WebSocket message (for system notifications)
      */
     private void sendMasterMessage(String message) {
         ChatMessage masterMessage = new ChatMessage();

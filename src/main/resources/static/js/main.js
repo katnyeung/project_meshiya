@@ -27,6 +27,9 @@ class MeshiyaApp {
         // Make WebSocket client globally accessible
         window.wsClient = this.wsClient;
         
+        // Initialize UI manager after WebSocket client is available
+        this.uiManager.initialize();
+        
         console.log('Meshiya initialization complete');
     }
 

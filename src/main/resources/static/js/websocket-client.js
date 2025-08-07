@@ -17,6 +17,26 @@ class WebSocketClient {
         console.log('Creating WebSocket connection to /ws/cafe');
         console.log('Username:', username, 'UserID:', this.userId);
         
+        // Store user data in localStorage
+        this.storeUserDataLocally();
+        
+        this.establishConnection();
+    }
+
+    connectWithExistingSession(userId, username) {
+        this.username = username;
+        this.userId = userId;
+        
+        console.log('Creating WebSocket connection with existing session');
+        console.log('Username:', username, 'UserID:', userId);
+        
+        // Store user data in localStorage
+        this.storeUserDataLocally();
+        
+        this.establishConnection();
+    }
+
+    establishConnection() {
         try {
             const socket = new SockJS('/ws/cafe');
             this.stompClient = Stomp.over(socket);
@@ -37,6 +57,7 @@ class WebSocketClient {
             this.onError(error);
         }
     }
+
 
     onConnected(frame) {
         console.log('Connected: ' + frame);
@@ -93,6 +114,7 @@ class WebSocketClient {
             };
             
             this.stompClient.send("/app/room.sendMessage", {}, JSON.stringify(chatMessage));
+            
         }
     }
 
@@ -184,6 +206,45 @@ class WebSocketClient {
 
     notifyConnectionHandlers(status) {
         this.connectionHandlers.forEach(handler => handler(status));
+    }
+
+    /**
+     * Stores user data in localStorage
+     */
+    storeUserDataLocally() {
+        try {
+            const userData = {
+                userId: this.userId,
+                username: this.username,
+                lastActivity: new Date().toISOString()
+            };
+            // Store both in session-specific and general locations
+            localStorage.setItem('meshiya_user', JSON.stringify(userData));
+            if (this.userId) {
+                localStorage.setItem(`meshiya_session_${this.userId}`, JSON.stringify({
+                    sessionId: this.userId,
+                    username: this.username,
+                    lastActivity: new Date().toISOString()
+                }));
+            }
+        } catch (error) {
+            console.warn('Failed to store user data locally:', error);
+        }
+    }
+    
+    /**
+     * Retrieves user data from localStorage
+     */
+    getUserDataFromLocal() {
+        try {
+            const stored = localStorage.getItem('meshiya_user');
+            if (stored) {
+                return JSON.parse(stored);
+            }
+        } catch (error) {
+            console.warn('Failed to retrieve user data from localStorage:', error);
+        }
+        return null;
     }
 
     generateUserId() {

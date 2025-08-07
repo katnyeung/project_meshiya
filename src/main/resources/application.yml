@@ -16,6 +16,9 @@ meshiya:
     max-seats: 8
     ai-response-delay: 3000
     max-context-messages: 20
+  user:
+    timeout:
+      minutes: 10  # Users will be logged out after 10 minutes of inactivity
 
 # AI Configuration
 ai:
@@ -39,3 +42,15 @@ ai:
   
   # Request timeout in milliseconds
   timeout: 30000
+
+# Swagger/OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+    tryItOutEnabled: true
+  show-actuator: false

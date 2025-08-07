@@ -3,6 +3,7 @@ package com.meshiya.controller;
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
 import com.meshiya.service.RoomService;
+import com.meshiya.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,9 @@ public class RoomController {
     private RoomService roomService;
     
     @Autowired
+    private UserService userService;
+    
+    @Autowired
     private ApplicationEventPublisher eventPublisher;
 
     @MessageMapping("/room.join")
@@ -33,6 +37,9 @@ public class RoomController {
         String userName = message.getUserName();
         
         logger.info("User {} ({}) joining room {}", userName, userId, roomId);
+        
+        // Track user activity and create/update profile
+        userService.updateUserActivity(userId, userName, roomId);
         
         // Store user info in session
         headerAccessor.getSessionAttributes().put("username", userName);
@@ -64,6 +71,9 @@ public class RoomController {
         logger.info("User {} sent message in room {}: {}", 
                    message.getUserName(), roomId, message.getContent());
         
+        // Track user activity and create/update profile
+        userService.updateUserActivity(message.getUserId(), message.getUserName(), roomId);
+        
         roomService.addMessageToRoom(roomId, message);
         
         // Publish event for Master analysis
@@ -79,7 +89,15 @@ public class RoomController {
         
         logger.info("User {} ({}) requesting seat {} in room {}", userName, userId, seatId, roomId);
         
+        // Track user activity and create/update profile
+        userService.updateUserActivity(userId, userName, roomId);
+        
         boolean success = roomService.joinSeat(roomId, seatId, userId);
+        
+        // Update user seat in profile if successful
+        if (success) {
+            userService.updateUserSeat(userId, seatId);
+        }
         
         ChatMessage responseMessage = new ChatMessage();
         responseMessage.setType(MessageType.SYSTEM_MESSAGE);
@@ -105,7 +123,15 @@ public class RoomController {
         
         logger.info("User {} ({}) leaving seat in room {}", userName, userId, roomId);
         
+        // Track user activity and create/update profile
+        userService.updateUserActivity(userId, userName, roomId);
+        
         boolean success = roomService.leaveSeat(roomId, userId);
+        
+        // Update user profile to remove seat
+        if (success) {
+            userService.removeUserSeat(userId);
+        }
         
         if (success) {
             ChatMessage responseMessage = new ChatMessage();
