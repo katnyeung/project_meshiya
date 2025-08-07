@@ -178,4 +178,86 @@ public class RedisService {
         addMessage(masterWelcome);
         logger.info("AI Master initialized in the diner");
     }
+    
+    /**
+     * Clear all Redis cache (use with caution!)
+     */
+    public Map<String, Object> clearAllCache() {
+        Map<String, Object> result = new HashMap<>();
+        int deletedKeys = 0;
+        
+        try {
+            // Get all keys to count them before deletion
+            Set<String> allKeys = redisTemplate.keys("*");
+            if (allKeys != null) {
+                deletedKeys = allKeys.size();
+            }
+            
+            // Flush all Redis data
+            redisTemplate.getConnectionFactory().getConnection().flushAll();
+            
+            logger.warn("CLEARED ALL REDIS CACHE - {} keys deleted", deletedKeys);
+            
+            result.put("status", "SUCCESS");
+            result.put("message", "All Redis cache cleared successfully");
+            result.put("deletedKeys", deletedKeys);
+            result.put("timestamp", System.currentTimeMillis());
+            
+        } catch (Exception e) {
+            logger.error("Error clearing all Redis cache: {}", e.getMessage(), e);
+            result.put("status", "ERROR");
+            result.put("message", "Failed to clear cache: " + e.getMessage());
+            result.put("deletedKeys", 0);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Get Redis cache statistics
+     */
+    public Map<String, Object> getCacheStats() {
+        Map<String, Object> stats = new HashMap<>();
+        
+        try {
+            Set<String> allKeys = redisTemplate.keys("*");
+            int totalKeys = allKeys != null ? allKeys.size() : 0;
+            
+            // Count keys by prefix
+            Map<String, Integer> keysByPrefix = new HashMap<>();
+            keysByPrefix.put("cafe:seats", 0);
+            keysByPrefix.put("cafe:messages", 0);  
+            keysByPrefix.put("cafe:users:", 0);
+            keysByPrefix.put("cafe:ai:context", 0);
+            keysByPrefix.put("user_profile:", 0);
+            keysByPrefix.put("room:", 0);
+            keysByPrefix.put("other", 0);
+            
+            if (allKeys != null) {
+                for (String key : allKeys) {
+                    boolean matched = false;
+                    for (String prefix : keysByPrefix.keySet()) {
+                        if (key.startsWith(prefix)) {
+                            keysByPrefix.put(prefix, keysByPrefix.get(prefix) + 1);
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (!matched) {
+                        keysByPrefix.put("other", keysByPrefix.get("other") + 1);
+                    }
+                }
+            }
+            
+            stats.put("totalKeys", totalKeys);
+            stats.put("keysByPrefix", keysByPrefix);
+            stats.put("timestamp", System.currentTimeMillis());
+            
+        } catch (Exception e) {
+            logger.error("Error getting cache stats: {}", e.getMessage());
+            stats.put("error", e.getMessage());
+        }
+        
+        return stats;
+    }
 }

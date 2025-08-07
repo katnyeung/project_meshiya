@@ -43,9 +43,13 @@ public class MasterResponseScheduler {
     // Simple response timing control
     private LocalDateTime lastResponse = LocalDateTime.now();
     
-    // Configuration - simplified
+    // Configuration - with rate limiting
     private static final int MIN_MESSAGES_BEFORE_ANALYSIS = 1; // Allow single messages to trigger
-    private static final int MIN_SECONDS_BETWEEN_RESPONSES = 15; // Faster responses
+    private static final int MIN_SECONDS_BETWEEN_RESPONSES = 30; // Increased from 15 to 30 seconds
+    private static final int MIN_SECONDS_BETWEEN_LLM_CALLS = 45; // Rate limit LLM calls independently
+    
+    // Track last LLM call time separately from last response time
+    private LocalDateTime lastLlmCall = LocalDateTime.now().minusMinutes(1);
     
     /**
      * Listen to chat message events and add to buffer for analysis
@@ -64,10 +68,10 @@ public class MasterResponseScheduler {
     }
     
     /**
-     * Quick scheduler - runs every 10 seconds to check for conversations to analyze
-     * Let the LLM decide whether Master should respond
+     * Slower scheduler - runs every 15 seconds to check for conversations to analyze
+     * Let the LLM decide whether Master should respond, with rate limiting
      */
-    @Scheduled(fixedRate = 100000) // Every 10 seconds
+    @Scheduled(fixedRate = 15000) // Every 15 seconds (reduced frequency)
     public void quickAnalysis() {
         logger.debug("Running quick analysis check (buffer size: {})", messageBuffer.size());
         
@@ -84,13 +88,22 @@ public class MasterResponseScheduler {
         
         LocalDateTime now = LocalDateTime.now();
         long secondsSinceLastResponse = java.time.Duration.between(lastResponse, now).toSeconds();
+        long secondsSinceLastLlmCall = java.time.Duration.between(lastLlmCall, now).toSeconds();
         
         if (secondsSinceLastResponse < MIN_SECONDS_BETWEEN_RESPONSES) {
-            logger.debug("Too soon since last response ({} sec ago)", secondsSinceLastResponse);
+            logger.debug("Too soon since last response ({} sec ago, need {})", 
+                        secondsSinceLastResponse, MIN_SECONDS_BETWEEN_RESPONSES);
             return;
         }
         
-        logger.info("Starting conversation analysis with {} messages", messageBuffer.size());
+        if (secondsSinceLastLlmCall < MIN_SECONDS_BETWEEN_LLM_CALLS) {
+            logger.debug("Rate limiting: Too soon since last LLM call ({} sec ago, need {})", 
+                        secondsSinceLastLlmCall, MIN_SECONDS_BETWEEN_LLM_CALLS);
+            return;
+        }
+        
+        logger.info("Starting conversation analysis with {} messages (last response: {}s ago, last LLM call: {}s ago)", 
+                   messageBuffer.size(), secondsSinceLastResponse, secondsSinceLastLlmCall);
         analyzeAndRespond();
     }
     
@@ -114,6 +127,9 @@ public class MasterResponseScheduler {
             }
             
             logger.info("Sending {} messages to LLM for analysis and response decision", messagesToAnalyze.size());
+            
+            // Update LLM call timestamp before making the call
+            lastLlmCall = LocalDateTime.now();
             
             // Always let LLM decide - it's smarter than our rules
             Optional<String> response = bartenderService.generateResponse(messagesToAnalyze);
@@ -205,11 +221,16 @@ public class MasterResponseScheduler {
      * Get current conversation statistics (for monitoring)
      */
     public Map<String, Object> getStats() {
+        LocalDateTime now = LocalDateTime.now();
         Map<String, Object> stats = new HashMap<>();
         stats.put("bufferSize", messageBuffer.size());
         stats.put("lastResponse", lastResponse);
-        stats.put("secondsSinceLastResponse", java.time.Duration.between(lastResponse, LocalDateTime.now()).toSeconds());
+        stats.put("lastLlmCall", lastLlmCall);
+        stats.put("secondsSinceLastResponse", java.time.Duration.between(lastResponse, now).toSeconds());
+        stats.put("secondsSinceLastLlmCall", java.time.Duration.between(lastLlmCall, now).toSeconds());
         stats.put("isProcessing", isProcessing.get());
+        stats.put("minSecondsBetweenResponses", MIN_SECONDS_BETWEEN_RESPONSES);
+        stats.put("minSecondsBetweenLlmCalls", MIN_SECONDS_BETWEEN_LLM_CALLS);
         return stats;
     }
 }
