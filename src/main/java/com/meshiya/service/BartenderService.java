@@ -157,6 +157,26 @@ public class BartenderService {
     }
     
     /**
+     * Extracts room ID from the messages list
+     */
+    private String extractRoomIdFromMessages(List<ChatMessage> messages) {
+        if (messages.isEmpty()) {
+            return null;
+        }
+        
+        // Get room ID from the most recent message that has one
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessage msg = messages.get(i);
+            String roomId = msg.getRoomId();
+            if (roomId != null && !roomId.trim().isEmpty()) {
+                return roomId;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
      * Builds conversation context from messages including order states
      */
     private String buildConversationContext(List<ChatMessage> messages) {
@@ -164,7 +184,16 @@ public class BartenderService {
         
         String currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
         context.append("Time: ").append(currentTime).append(" (late night)\n");
-        context.append("Location: Meshiya Midnight Diner\n\n");
+        
+        // Extract room ID from messages and include in location context
+        String roomId = extractRoomIdFromMessages(messages);
+        if (roomId != null && !roomId.isEmpty()) {
+            logger.debug("Building conversation context for room: {}", roomId);
+            context.append("Location: Meshiya Midnight Diner - Room ").append(roomId).append("\n\n");
+        } else {
+            logger.debug("Building conversation context for main diner (no room ID found)");
+            context.append("Location: Meshiya Midnight Diner\n\n");
+        }
         
         // Add customer order states
         Set<String> customers = new HashSet<>();

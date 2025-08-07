@@ -281,21 +281,22 @@ class UIManager {
     // Message handling
     handleMessage(message) {
         console.log('UI Manager handling message:', message);
+        console.log('Message timestamp:', message.timestamp, 'Type:', typeof message.timestamp);
         switch (message.type) {
             case 'CHAT_MESSAGE':
-                this.addChatMessage(message.userName, message.content);
+                this.addChatMessage(message.userName, message.content, message.timestamp);
                 break;
                 
             case 'SYSTEM_MESSAGE':
-                this.addSystemMessage(message.content);
+                this.addSystemMessage(message.content, message.timestamp);
                 break;
                 
             case 'AI_MESSAGE':
-                this.addAIMessage(message.content);
+                this.addAIMessage(message.content, message.timestamp);
                 break;
                 
             default:
-                this.addSystemMessage(message.content || 'Unknown message type');
+                this.addSystemMessage(message.content || 'Unknown message type', message.timestamp);
         }
     }
 
@@ -388,38 +389,87 @@ class UIManager {
     }
 
     // Message display methods
-    addChatMessage(sender, content) {
+    addChatMessage(sender, content, timestamp) {
         const messageEl = document.createElement('div');
         messageEl.className = 'message user';
-        messageEl.innerHTML = `<span class="message-sender">${sender}:</span> ${this.escapeHtml(content)}`;
         
-        this.appendMessage(messageEl);
+        const timestampStr = this.formatTimestamp(timestamp);
+        messageEl.innerHTML = `
+            <div class="message-header">
+                <span class="message-sender">${sender}:</span>
+                <span class="message-timestamp">${timestampStr}</span>
+            </div>
+            <div class="message-content">${this.escapeHtml(content)}</div>
+        `;
+        
+        this.appendMessage(messageEl, timestamp);
     }
 
-    addSystemMessage(content) {
+    addSystemMessage(content, timestamp) {
         const messageEl = document.createElement('div');
         messageEl.className = 'message system';
-        messageEl.textContent = content;
         
-        this.appendMessage(messageEl);
+        const timestampStr = this.formatTimestamp(timestamp);
+        messageEl.innerHTML = `
+            <span class="system-content">${this.escapeHtml(content)}</span>
+            <span class="message-timestamp">${timestampStr}</span>
+        `;
+        
+        this.appendMessage(messageEl, timestamp);
     }
 
-    addAIMessage(content) {
+    addAIMessage(content, timestamp) {
         const messageEl = document.createElement('div');
         messageEl.className = 'message ai';
-        messageEl.innerHTML = `<span class="message-sender">Master:</span> ${this.escapeHtml(content)}`;
         
-        this.appendMessage(messageEl);
+        const timestampStr = this.formatTimestamp(timestamp);
+        messageEl.innerHTML = `
+            <div class="message-header">
+                <span class="message-sender">Master:</span>
+                <span class="message-timestamp">${timestampStr}</span>
+            </div>
+            <div class="message-content">${this.escapeHtml(content)}</div>
+        `;
+        
+        this.appendMessage(messageEl, timestamp);
     }
 
-    appendMessage(messageEl) {
-        this.elements.chatMessages.appendChild(messageEl);
-        this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+    appendMessage(messageEl, timestamp) {
+        // Store timestamp in ISO format for consistent sorting
+        let normalizedTimestamp;
+        if (timestamp) {
+            try {
+                const date = this.parseTimestampToDate(timestamp);
+                normalizedTimestamp = date.toISOString();
+            } catch (error) {
+                console.warn('Error normalizing timestamp:', timestamp, error);
+                normalizedTimestamp = new Date().toISOString();
+            }
+        } else {
+            normalizedTimestamp = new Date().toISOString();
+        }
+        
+        messageEl.dataset.timestamp = normalizedTimestamp;
+        
+        // Insert message in chronological order
+        const messages = Array.from(this.elements.chatMessages.children);
+        const insertIndex = this.findInsertPosition(messages, normalizedTimestamp);
+        
+        if (insertIndex === messages.length) {
+            this.elements.chatMessages.appendChild(messageEl);
+        } else {
+            this.elements.chatMessages.insertBefore(messageEl, messages[insertIndex]);
+        }
+        
+        // Only scroll to bottom if we're inserting at the end (newest message)
+        if (insertIndex === messages.length) {
+            this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+        }
         
         // Limit message history (keep last 100 messages)
-        const messages = this.elements.chatMessages.children;
-        if (messages.length > 100) {
-            messages[0].remove();
+        const updatedMessages = Array.from(this.elements.chatMessages.children);
+        if (updatedMessages.length > 100) {
+            updatedMessages[0].remove();
         }
     }
 
@@ -427,6 +477,90 @@ class UIManager {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+    
+    formatTimestamp(timestamp) {
+        if (!timestamp) {
+            return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        
+        try {
+            // Handle different timestamp formats
+            let date;
+            
+            if (typeof timestamp === 'string') {
+                // Handle Java LocalDateTime format (e.g., "2024-01-01T15:30:45" or array format)
+                if (timestamp.includes('T')) {
+                    date = new Date(timestamp);
+                } else {
+                    // If it's not ISO format, try direct parsing
+                    date = new Date(timestamp);
+                }
+            } else if (Array.isArray(timestamp)) {
+                // Handle Java LocalDateTime array format [2024, 1, 1, 15, 30, 45, 123456789]
+                // Note: Month is 0-based in JS but 1-based in Java
+                const [year, month, day, hour, minute, second, nano] = timestamp;
+                date = new Date(year, month - 1, day, hour, minute, second, Math.floor(nano / 1000000));
+            } else {
+                // Assume it's already a Date object or timestamp
+                date = new Date(timestamp);
+            }
+            
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                console.warn('Invalid timestamp received:', timestamp);
+                return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }
+            
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } catch (error) {
+            console.warn('Error parsing timestamp:', timestamp, error);
+            return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+    }
+    
+    findInsertPosition(messages, newTimestamp) {
+        // Convert timestamp to Date object for proper comparison
+        const newDate = this.parseTimestampToDate(newTimestamp);
+        
+        for (let i = 0; i < messages.length; i++) {
+            const messageTimestamp = messages[i].dataset.timestamp;
+            const messageDate = this.parseTimestampToDate(messageTimestamp);
+            
+            // If new message is older than current message, insert here
+            if (newDate < messageDate) {
+                return i;
+            }
+        }
+        return messages.length; // Insert at end (newest)
+    }
+    
+    parseTimestampToDate(timestamp) {
+        if (!timestamp) {
+            return new Date();
+        }
+        
+        try {
+            // Handle different timestamp formats
+            if (typeof timestamp === 'string') {
+                // If it's already an ISO string, use it directly
+                if (timestamp.includes('T')) {
+                    return new Date(timestamp);
+                } else {
+                    // If it's our stored timestamp format, parse it
+                    return new Date(timestamp);
+                }
+            } else if (Array.isArray(timestamp)) {
+                // Handle Java LocalDateTime array format
+                const [year, month, day, hour, minute, second, nano] = timestamp;
+                return new Date(year, month - 1, day, hour, minute, second, Math.floor(nano / 1000000));
+            } else {
+                return new Date(timestamp);
+            }
+        } catch (error) {
+            console.warn('Error parsing timestamp for sorting:', timestamp, error);
+            return new Date(); // Fallback to current time
+        }
     }
 
     // Public methods for external access
