@@ -35,7 +35,10 @@ class UIManager {
             
             statusDisplay: document.getElementById('status-display'),
             currentSeat: document.getElementById('current-seat'),
-            connectionStatus: document.getElementById('connection-status')
+            connectionStatus: document.getElementById('connection-status'),
+            
+            masterStatusLabel: document.getElementById('master-status-label'),
+            masterStatusText: document.getElementById('master-status-text')
         };
     }
 
@@ -232,6 +235,7 @@ class UIManager {
         this.elements.chatInterface.classList.remove('hidden');
         this.elements.seatControls.classList.remove('hidden');
         this.elements.statusDisplay.classList.remove('hidden');
+        this.elements.masterStatusLabel.classList.remove('hidden');
         
         this.addSystemMessage('Welcome to Meshiya! Take a seat and enjoy your stay.');
     }
@@ -561,6 +565,31 @@ class UIManager {
             console.warn('Error parsing timestamp for sorting:', timestamp, error);
             return new Date(); // Fallback to current time
         }
+    }
+
+    handleMasterStatusUpdate(message) {
+        console.log('UI Manager handling master status update:', message);
+        
+        if (message.type === 'MASTER_STATUS_UPDATE') {
+            this.updateMasterStatus(message.status, message.displayName);
+        }
+    }
+
+    updateMasterStatus(status, displayName) {
+        if (!this.elements.masterStatusLabel || !this.elements.masterStatusText) {
+            return;
+        }
+
+        // Remove all status classes
+        const statusClasses = ['status-idle', 'status-thinking', 'status-preparing_order', 
+                              'status-serving', 'status-busy', 'status-cleaning', 'status-conversing'];
+        statusClasses.forEach(cls => this.elements.masterStatusLabel.classList.remove(cls));
+
+        // Add new status class
+        this.elements.masterStatusLabel.classList.add(`status-${status.toLowerCase()}`);
+        
+        // Update text
+        this.elements.masterStatusText.textContent = displayName || status.replace('_', ' ');
     }
 
     // Public methods for external access

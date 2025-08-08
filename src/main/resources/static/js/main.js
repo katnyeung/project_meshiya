@@ -47,6 +47,10 @@ class MeshiyaApp {
         this.wsClient.onConnectionChange((status) => {
             this.uiManager.handleConnectionChange(status);
         });
+
+        this.wsClient.onMasterStatusUpdate((message) => {
+            this.uiManager.handleMasterStatusUpdate(message);
+        });
     }
 
     // Public API for debugging/external access

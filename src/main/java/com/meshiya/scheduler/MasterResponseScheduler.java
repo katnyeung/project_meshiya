@@ -2,7 +2,7 @@ package com.meshiya.scheduler;
 
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
-import com.meshiya.service.BartenderService;
+import com.meshiya.service.MasterService;
 import com.meshiya.service.ChatService;
 import com.meshiya.service.RoomService;
 import com.meshiya.event.ChatMessageEvent;
@@ -25,7 +25,7 @@ public class MasterResponseScheduler {
     private static final Logger logger = LoggerFactory.getLogger(MasterResponseScheduler.class);
     
     @Autowired
-    private BartenderService bartenderService;
+    private MasterService masterService;
     
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
@@ -150,7 +150,7 @@ public class MasterResponseScheduler {
             lastLlmCalls.put(roomId, LocalDateTime.now());
             
             // Always let LLM decide - it's smarter than our rules
-            Optional<String> response = bartenderService.generateResponse(messagesToAnalyze);
+            Optional<String> response = masterService.generateResponse(messagesToAnalyze);
             
             if (response.isPresent()) {
                 sendMasterResponse(response.get(), roomId);

@@ -8,6 +8,7 @@ class WebSocketClient {
         this.messageHandlers = [];
         this.seatHandlers = [];
         this.connectionHandlers = [];
+        this.masterStatusHandlers = [];
     }
 
     connect(username) {
@@ -74,6 +75,12 @@ class WebSocketClient {
         this.stompClient.subscribe('/topic/room/room1/seats', (messageOutput) => {
             console.log('Received seat update:', messageOutput.body);
             this.handleSeatUpdate(JSON.parse(messageOutput.body));
+        });
+        
+        // Subscribe to master status updates
+        this.stompClient.subscribe('/topic/master-status', (messageOutput) => {
+            console.log('Received master status update:', messageOutput.body);
+            this.handleMasterStatusUpdate(JSON.parse(messageOutput.body));
         });
         
         // Join Room1
@@ -183,6 +190,11 @@ class WebSocketClient {
         }
     }
 
+    handleMasterStatusUpdate(message) {
+        console.log('Handling master status update:', message);
+        this.notifyMasterStatusHandlers(message);
+    }
+
     // Event handler management
     onMessage(handler) {
         this.messageHandlers.push(handler);
@@ -196,6 +208,10 @@ class WebSocketClient {
         this.connectionHandlers.push(handler);
     }
 
+    onMasterStatusUpdate(handler) {
+        this.masterStatusHandlers.push(handler);
+    }
+
     notifyMessageHandlers(message) {
         this.messageHandlers.forEach(handler => handler(message));
     }
@@ -206,6 +222,10 @@ class WebSocketClient {
 
     notifyConnectionHandlers(status) {
         this.connectionHandlers.forEach(handler => handler(status));
+    }
+
+    notifyMasterStatusHandlers(message) {
+        this.masterStatusHandlers.forEach(handler => handler(message));
     }
 
     /**

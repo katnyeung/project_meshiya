@@ -280,6 +280,103 @@ body {
     color: #ff6b6b;
 }
 
+/* Master Status Label */
+#master-status-label {
+    position: absolute;
+    top: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    border: 2px solid #ffd700;
+    border-radius: 15px;
+    padding: 8px 16px;
+    backdrop-filter: blur(10px);
+    pointer-events: none;
+    z-index: 150;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: center;
+    min-width: 120px;
+    box-shadow: 0 4px 20px rgba(255, 215, 0, 0.3);
+    transition: all 0.3s ease;
+}
+
+#master-status-text {
+    color: #ffd700;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+    text-transform: capitalize;
+}
+
+/* Status-specific colors */
+#master-status-label.status-idle {
+    border-color: #90ee90;
+}
+
+#master-status-label.status-idle #master-status-text {
+    color: #90ee90;
+}
+
+#master-status-label.status-thinking {
+    border-color: #87ceeb;
+    animation: thinking-pulse 2s infinite;
+}
+
+#master-status-label.status-thinking #master-status-text {
+    color: #87ceeb;
+}
+
+#master-status-label.status-preparing_order,
+#master-status-label.status-busy {
+    border-color: #ffa500;
+}
+
+#master-status-label.status-preparing_order #master-status-text,
+#master-status-label.status-busy #master-status-text {
+    color: #ffa500;
+}
+
+#master-status-label.status-serving {
+    border-color: #ff69b4;
+    animation: serving-glow 1.5s infinite;
+}
+
+#master-status-label.status-serving #master-status-text {
+    color: #ff69b4;
+}
+
+#master-status-label.status-cleaning {
+    border-color: #dda0dd;
+}
+
+#master-status-label.status-cleaning #master-status-text {
+    color: #dda0dd;
+}
+
+#master-status-label.status-conversing {
+    border-color: #20b2aa;
+    animation: conversation-pulse 3s infinite;
+}
+
+#master-status-label.status-conversing #master-status-text {
+    color: #20b2aa;
+}
+
+@keyframes thinking-pulse {
+    0%, 100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
+    50% { opacity: 1; transform: translateX(-50%) scale(1.05); }
+}
+
+@keyframes serving-glow {
+    0%, 100% { box-shadow: 0 4px 20px rgba(255, 105, 180, 0.3); }
+    50% { box-shadow: 0 4px 30px rgba(255, 105, 180, 0.6); }
+}
+
+@keyframes conversation-pulse {
+    0%, 100% { opacity: 0.8; }
+    33% { opacity: 1; }
+    66% { opacity: 0.9; }
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 8px;

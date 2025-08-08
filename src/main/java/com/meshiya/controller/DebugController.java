@@ -131,7 +131,6 @@ public class DebugController {
             List<ChatMessage> aiContext = redisService.getAIContext();
             Map<String, Object> contextMap = new HashMap<>();
             contextMap.put("messages", aiContext);
-            masterInfo.setCurrentContext(contextMap);
             
             // Get recent responses from chat messages
             List<ChatMessage> messages = redisService.getAllRecentMessages();
@@ -153,10 +152,28 @@ public class DebugController {
             masterInfo.setLastResponseTime(System.currentTimeMillis());
             masterInfo.setLastLlmCallTime(System.currentTimeMillis());
             
-            // Count pending orders
-            int pendingOrders = 0;
-            // This would need to be implemented based on your order system
+            // Get order queue status from OrderService
+            Map<String, Object> queueStatus = orderService.getQueueStatus();
+            int pendingOrders = (Integer) queueStatus.get("queueSize");
             masterInfo.setPendingOrders(pendingOrders);
+            
+            // Add additional order information to context
+            Map<String, Object> orderContext = new HashMap<>();
+            orderContext.put("queueSize", queueStatus.get("queueSize"));
+            orderContext.put("activeOrdersCount", queueStatus.get("activeOrdersCount"));
+            orderContext.put("masterBusy", queueStatus.get("masterBusy"));
+            orderContext.put("currentlyPreparing", queueStatus.get("currentlyPreparing"));
+            orderContext.put("currentlyPreparingOrderId", queueStatus.get("currentlyPreparingOrderId"));
+            
+            // Get room1 specific orders
+            var roomOrders = orderService.getRoomOrders("room1");
+            var pendingRoomOrders = orderService.getRoomPendingOrders("room1");
+            orderContext.put("room1TotalOrders", roomOrders.size());
+            orderContext.put("room1PendingOrders", pendingRoomOrders.size());
+            
+            // Add order context to the main context map
+            contextMap.put("orderSystem", orderContext);
+            masterInfo.setCurrentContext(contextMap);
             
             // Scheduler info
             List<DebugMasterInfo.DebugSchedulerInfo> schedulers = Arrays.asList(
@@ -363,8 +380,23 @@ public class DebugController {
                     String.valueOf(userProfile.getCurrentSeat()) : null;
                 long lastActivity = userProfile.getLastActivity().toInstant(ZoneOffset.UTC).toEpochMilli();
                 
-                // Get user orders (placeholder - implement based on your order system)
+                // Get user orders from OrderService
                 List<DebugUserInfo.DebugOrder> orders = new ArrayList<>();
+                var userOrders = orderService.getUserCurrentOrders(userId);
+                
+                for (var order : userOrders) {
+                    long orderTime = order.getOrderTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
+                    long completionTime = order.getEstimatedReadyTime() != null ? 
+                        order.getEstimatedReadyTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli() : 0;
+                        
+                    orders.add(new DebugUserInfo.DebugOrder(
+                        order.getOrderId(),
+                        order.getMenuItem().getName(),
+                        order.getStatus().toString(),
+                        orderTime,
+                        completionTime
+                    ));
+                }
                 
                 return new DebugUserInfo(userId, userProfile.getUserName(), userProfile.getRoomId(), 
                                        seatId, lastActivity, orders, userProfile.isActive());
@@ -373,8 +405,26 @@ public class DebugController {
                 Integer seatId = redisService.getUserSeat(userId);
                 String userSeatId = seatId != null ? String.valueOf(seatId) : null;
                 
+                // Still get orders even without user profile
+                List<DebugUserInfo.DebugOrder> orders = new ArrayList<>();
+                var userOrders = orderService.getUserCurrentOrders(userId);
+                
+                for (var order : userOrders) {
+                    long orderTime = order.getOrderTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
+                    long completionTime = order.getEstimatedReadyTime() != null ? 
+                        order.getEstimatedReadyTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli() : 0;
+                        
+                    orders.add(new DebugUserInfo.DebugOrder(
+                        order.getOrderId(),
+                        order.getMenuItem().getName(),
+                        order.getStatus().toString(),
+                        orderTime,
+                        completionTime
+                    ));
+                }
+                
                 return new DebugUserInfo(userId, "Unknown", "room1", userSeatId, 
-                                       System.currentTimeMillis(), new ArrayList<>(), false);
+                                       System.currentTimeMillis(), orders, false);
             }
             
         } catch (Exception e) {

@@ -7,6 +7,7 @@ public class Order {
     private String orderId;
     private String userId;
     private String userName;
+    private String roomId;
     private MenuItem menuItem;
     private OrderStatus status;
     private LocalDateTime orderTime;
@@ -16,11 +17,12 @@ public class Order {
     // Constructors
     public Order() {}
     
-    public Order(String orderId, String userId, String userName, MenuItem menuItem, 
-                 Integer seatId) {
+    public Order(String orderId, String userId, String userName, String roomId, 
+                 MenuItem menuItem, Integer seatId) {
         this.orderId = orderId;
         this.userId = userId;
         this.userName = userName;
+        this.roomId = roomId;
         this.menuItem = menuItem;
         this.seatId = seatId;
         this.status = OrderStatus.ORDERED;
@@ -54,6 +56,9 @@ public class Order {
     
     public Integer getSeatId() { return seatId; }
     public void setSeatId(Integer seatId) { this.seatId = seatId; }
+    
+    public String getRoomId() { return roomId; }
+    public void setRoomId(String roomId) { this.roomId = roomId; }
     
     @Override
     public String toString() {

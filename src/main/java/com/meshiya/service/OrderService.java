@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.BiConsumer;
 
 @Service
 public class OrderService {
@@ -37,10 +38,40 @@ public class OrderService {
     private boolean masterBusy = false;
     private Order currentlyPreparing = null;
     
+    // Order status callback
+    private BiConsumer<Order, OrderStatus> orderStatusCallback;
+    
+    /**
+     * Sets callback for order status changes
+     */
+    public void setOrderStatusCallback(BiConsumer<Order, OrderStatus> callback) {
+        this.orderStatusCallback = callback;
+    }
+    
+    /**
+     * Notifies callback of order status change
+     */
+    private void notifyStatusChange(Order order, OrderStatus newStatus) {
+        if (orderStatusCallback != null) {
+            try {
+                orderStatusCallback.accept(order, newStatus);
+            } catch (Exception e) {
+                logger.error("Error in order status callback", e);
+            }
+        }
+    }
+    
     /**
      * Places a new order
      */
     public synchronized boolean placeOrder(String userId, String userName, String itemId, Integer seatId) {
+        return placeOrder(userId, userName, "room1", itemId, seatId);
+    }
+    
+    /**
+     * Places a new order with roomId
+     */
+    public synchronized boolean placeOrder(String userId, String userName, String roomId, String itemId, Integer seatId) {
         // Allow multiple orders per user (drinks + food combinations are common)
         
         Optional<MenuItem> menuItem = menuService.getMenuItem(itemId);
@@ -50,15 +81,17 @@ public class OrderService {
         }
         
         String orderId = generateOrderId();
-        Order order = new Order(orderId, userId, userName, menuItem.get(), seatId);
+        Order order = new Order(orderId, userId, userName, roomId, menuItem.get(), seatId);
         
         orderQueue.offer(order);
         activeOrders.put(orderId, order);
         userCurrentOrders.computeIfAbsent(userId, k -> new HashSet<>()).add(orderId);
         
-        logger.info("Order placed: {} ordered {}", userName, menuItem.get().getName());
+        notifyStatusChange(order, OrderStatus.ORDERED);
         
-        // Don't send automatic confirmation here - let BartenderService handle it
+        logger.info("Order placed: {} ordered {} in room {}", userName, menuItem.get().getName(), roomId);
+        
+        // Don't send automatic confirmation here - let MasterService handle it
         
         return true;
     }
@@ -123,6 +156,7 @@ public class OrderService {
         currentlyPreparing = order;
         masterBusy = true;
         order.setStatus(OrderStatus.PREPARING);
+        notifyStatusChange(order, OrderStatus.PREPARING);
         
         logger.info("Master started preparing: {} for {}", 
                    order.getMenuItem().getName(), order.getUserName());
@@ -142,6 +176,7 @@ public class OrderService {
         if (currentlyPreparing == null) return;
         
         currentlyPreparing.setStatus(OrderStatus.READY);
+        notifyStatusChange(currentlyPreparing, OrderStatus.READY);
         logger.info("Order ready: {} for {}", 
                    currentlyPreparing.getMenuItem().getName(), 
                    currentlyPreparing.getUserName());
@@ -166,6 +201,7 @@ public class OrderService {
      */
     private void serveOrder(Order order) {
         order.setStatus(OrderStatus.SERVED);
+        notifyStatusChange(order, OrderStatus.SERVED);
         
         // Send served message to specific user
         ChatMessage servedMessage = new ChatMessage();
@@ -189,6 +225,7 @@ public class OrderService {
             Order order = activeOrders.get(orderId);
             if (order != null) {
                 order.setStatus(OrderStatus.CONSUMING);
+                notifyStatusChange(order, OrderStatus.CONSUMING);
                 
                 // Clean up after some time (simulate finishing)
                 // In a real app, this would be triggered by user action
@@ -249,7 +286,43 @@ public class OrderService {
         status.put("activeOrdersCount", activeOrders.size());
         status.put("masterBusy", masterBusy);
         status.put("currentlyPreparing", currentlyPreparing != null ? currentlyPreparing.getMenuItem().getName() : null);
+        status.put("currentlyPreparingOrderId", currentlyPreparing != null ? currentlyPreparing.getOrderId() : null);
         return status;
+    }
+    
+    /**
+     * Gets orders for a specific room
+     */
+    public List<Order> getRoomOrders(String roomId) {
+        return activeOrders.values().stream()
+                .filter(order -> roomId.equals(order.getRoomId()))
+                .sorted(Comparator.comparing(Order::getOrderTime))
+                .collect(java.util.stream.Collectors.toList());
+    }
+    
+    /**
+     * Gets pending orders for a specific room (orders not yet being prepared or completed)
+     */
+    public List<Order> getRoomPendingOrders(String roomId) {
+        return orderQueue.stream()
+                .filter(order -> roomId.equals(order.getRoomId()) && 
+                               (order.getStatus() == OrderStatus.ORDERED || 
+                                order.getStatus() == OrderStatus.PREPARING))
+                .collect(java.util.stream.Collectors.toList());
+    }
+    
+    /**
+     * Gets the current order being prepared
+     */
+    public Order getCurrentlyPreparing() {
+        return currentlyPreparing;
+    }
+    
+    /**
+     * Checks if master is busy
+     */
+    public boolean isMasterBusy() {
+        return masterBusy;
     }
     
     /**
