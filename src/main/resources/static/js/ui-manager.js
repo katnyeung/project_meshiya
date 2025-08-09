@@ -235,7 +235,8 @@ class UIManager {
         this.elements.chatInterface.classList.remove('hidden');
         this.elements.seatControls.classList.remove('hidden');
         this.elements.statusDisplay.classList.remove('hidden');
-        this.elements.masterStatusLabel.classList.remove('hidden');
+        // Don't show the HTML master status label anymore - use Three.js sprite instead
+        // this.elements.masterStatusLabel.classList.remove('hidden');
         
         this.addSystemMessage('Welcome to Meshiya! Take a seat and enjoy your stay.');
     }
@@ -572,6 +573,10 @@ class UIManager {
         
         if (message.type === 'MASTER_STATUS_UPDATE') {
             this.updateMasterStatus(message.status, message.displayName);
+            // Also update the Three.js sprite
+            if (window.meshiya && window.meshiya.dinerScene) {
+                window.meshiya.dinerScene.updateMasterStatusSprite(message.status, message.displayName);
+            }
         }
     }
 

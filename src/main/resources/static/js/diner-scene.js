@@ -11,7 +11,9 @@ class DinerScene {
             counter: null,
             master: null,
             seats: [],
-            customers: []
+            customers: [],
+            userStatusBoxes: [],
+            masterStatusLabel: null
         };
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
@@ -47,6 +49,9 @@ class DinerScene {
         
         // Create seats
         this.createSeats();
+        
+        // Create UI elements as sprites
+        this.createUISprites();
         
         // Add click handler for seat interaction
         this.renderer.domElement.addEventListener('click', (e) => this.handleCanvasClick(e));
@@ -600,6 +605,183 @@ class DinerScene {
         this.camera.bottom = frustumSize / -2;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    createUISprites() {
+        // Create master status label sprite
+        this.createMasterStatusSprite();
+        
+        // Create user status box sprites for each seat
+        this.createUserStatusSprites();
+    }
+    
+    createMasterStatusSprite() {
+        const canvas = this.createMasterStatusCanvas('Idle', '#90ee90');
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        this.sprites.masterStatusLabel = new THREE.Sprite(material);
+        this.sprites.masterStatusLabel.position.set(0, 4.5, 5);
+        this.sprites.masterStatusLabel.scale.set(3, 0.8, 1);
+        this.sprites.masterStatusLabel.visible = false; // Initially hidden
+        this.scene.add(this.sprites.masterStatusLabel);
+    }
+    
+    createMasterStatusCanvas(text, color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 240;
+        canvas.height = 60;
+        const ctx = canvas.getContext('2d');
+        
+        // Background with rounded corners
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        this.drawRoundedRect(ctx, 5, 5, 230, 50, 10);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Text
+        ctx.fillStyle = color;
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 120, 30);
+        
+        return canvas;
+    }
+    
+    createUserStatusSprites() {
+        // Create status box sprites for seats 1-8
+        for (let i = 0; i < 8; i++) {
+            const canvas = this.createUserStatusCanvas('');
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const statusSprite = new THREE.Sprite(material);
+            
+            // Position above each seat
+            const seat = this.seats[i];
+            if (seat) {
+                statusSprite.position.set(seat.position.x, seat.position.y + 2, 3);
+                statusSprite.scale.set(2.5, 1, 1);
+            }
+            statusSprite.visible = false; // Initially hidden
+            
+            this.sprites.userStatusBoxes.push(statusSprite);
+            this.scene.add(statusSprite);
+        }
+    }
+    
+    createUserStatusCanvas(content) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 200;
+        canvas.height = 80;
+        const ctx = canvas.getContext('2d');
+        
+        if (!content) {
+            // Empty canvas for hidden state
+            return canvas;
+        }
+        
+        // Background with rounded corners
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 2;
+        this.drawRoundedRect(ctx, 2, 2, 196, 76, 4);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Text content
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        const lines = content.split('\n');
+        const lineHeight = 14;
+        const startY = 40 - ((lines.length - 1) * lineHeight / 2);
+        
+        lines.forEach((line, index) => {
+            ctx.fillText(line, 100, startY + index * lineHeight);
+        });
+        
+        return canvas;
+    }
+    
+    updateMasterStatusSprite(status, displayName) {
+        if (!this.sprites.masterStatusLabel) return;
+        
+        // Status color mapping
+        const colorMap = {
+            idle: '#90ee90',
+            thinking: '#87ceeb',
+            preparing_order: '#ffa500',
+            busy: '#ffa500',
+            serving: '#ff69b4',
+            cleaning: '#dda0dd',
+            conversing: '#20b2aa'
+        };
+        
+        const color = colorMap[status.toLowerCase()] || '#ffd700';
+        const text = displayName || status.replace('_', ' ');
+        
+        const canvas = this.createMasterStatusCanvas(text, color);
+        this.sprites.masterStatusLabel.material.map = new THREE.CanvasTexture(canvas);
+        this.sprites.masterStatusLabel.material.needsUpdate = true;
+        this.sprites.masterStatusLabel.visible = true;
+    }
+    
+    updateUserStatusSprite(seatId, consumables) {
+        const seatIndex = seatId - 1;
+        if (seatIndex < 0 || seatIndex >= this.sprites.userStatusBoxes.length) return;
+        
+        const statusSprite = this.sprites.userStatusBoxes[seatIndex];
+        if (!statusSprite) return;
+        
+        if (!consumables || consumables.length === 0) {
+            statusSprite.visible = false;
+            return;
+        }
+        
+        // Create content text
+        const content = consumables.map(c => {
+            const minutes = Math.floor((c.remainingSeconds || 0) / 60);
+            const seconds = (c.remainingSeconds || 0) % 60;
+            const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            return `${c.itemName} ${timeStr}`;
+        }).join('\n');
+        
+        const canvas = this.createUserStatusCanvas(content);
+        statusSprite.material.map = new THREE.CanvasTexture(canvas);
+        statusSprite.material.needsUpdate = true;
+        statusSprite.visible = true;
+    }
+    
+    hideUserStatusSprite(seatId) {
+        const seatIndex = seatId - 1;
+        if (seatIndex >= 0 && seatIndex < this.sprites.userStatusBoxes.length) {
+            this.sprites.userStatusBoxes[seatIndex].visible = false;
+        }
+    }
+    
+    hideMasterStatusSprite() {
+        if (this.sprites.masterStatusLabel) {
+            this.sprites.masterStatusLabel.visible = false;
+        }
+    }
+    
+    // Helper method to draw rounded rectangles (browser compatibility)
+    drawRoundedRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
     }
 
     getSeatStates() {

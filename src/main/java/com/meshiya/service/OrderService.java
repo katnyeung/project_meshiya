@@ -29,6 +29,9 @@ public class OrderService {
     @Autowired
     private RoomService roomService;
     
+    @Autowired
+    private UserStatusService userStatusService;
+    
     // Order queue management
     private final Queue<Order> orderQueue = new ConcurrentLinkedQueue<>();
     private final Map<String, Order> activeOrders = new ConcurrentHashMap<>();
@@ -212,6 +215,9 @@ public class OrderService {
         servedMessage.setSeatId(order.getSeatId());
         
         messagingTemplate.convertAndSendToUser(order.getUserId(), "/queue/orders", servedMessage);
+        
+        // Add consumable to user status
+        userStatusService.addConsumable(order.getUserId(), order.getRoomId(), order.getSeatId(), order.getMenuItem());
         
         logger.info("Order served: {} to {}", order.getMenuItem().getName(), order.getUserName());
     }

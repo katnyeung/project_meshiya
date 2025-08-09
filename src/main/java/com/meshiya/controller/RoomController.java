@@ -4,6 +4,7 @@ import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
 import com.meshiya.service.RoomService;
 import com.meshiya.service.UserService;
+import com.meshiya.service.RoomSeatUserManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,9 @@ public class RoomController {
     
     @Autowired
     private UserService userService;
+    
+    @Autowired
+    private RoomSeatUserManager roomSeatUserManager;
     
     @Autowired
     private ApplicationEventPublisher eventPublisher;
@@ -94,8 +98,9 @@ public class RoomController {
         
         boolean success = roomService.joinSeat(roomId, seatId, userId);
         
-        // Update user seat in profile if successful
+        // Update centralized mapping and user profile if successful
         if (success) {
+            roomSeatUserManager.joinSeat(roomId, seatId, userId, userName);
             userService.updateUserSeat(userId, seatId);
         }
         
@@ -128,8 +133,9 @@ public class RoomController {
         
         boolean success = roomService.leaveSeat(roomId, userId);
         
-        // Update user profile to remove seat
+        // Update centralized mapping and user profile
         if (success) {
+            roomSeatUserManager.leaveSeat(roomId, userId);
             userService.removeUserSeat(userId);
         }
         

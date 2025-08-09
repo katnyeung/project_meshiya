@@ -30,6 +30,14 @@ class MeshiyaApp {
         // Initialize UI manager after WebSocket client is available
         this.uiManager.initialize();
         
+        // Initialize UserStatusManager after WebSocket is ready
+        if (window.userStatusManager) {
+            setTimeout(() => {
+                window.userStatusManager.init();
+                console.log('🎯 UserStatusManager initialized');
+            }, 500);
+        }
+        
         console.log('Meshiya initialization complete');
     }
 
@@ -50,6 +58,13 @@ class MeshiyaApp {
 
         this.wsClient.onMasterStatusUpdate((message) => {
             this.uiManager.handleMasterStatusUpdate(message);
+        });
+
+        // Connect user status updates to UserStatusManager
+        this.wsClient.onUserStatusUpdate((message) => {
+            if (window.userStatusManager && window.userStatusManager.isInitialized) {
+                window.userStatusManager.handleUserStatusUpdate(message);
+            }
         });
     }
 

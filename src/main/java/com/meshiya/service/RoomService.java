@@ -29,6 +29,9 @@ public class RoomService {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
     
+    @Autowired
+    private UserStatusService userStatusService;
+    
     private final ObjectMapper objectMapper;
     
     public RoomService() {
@@ -189,6 +192,9 @@ public class RoomService {
         if (seatId == null) {
             return false;
         }
+        
+        // Clear user's consumables when leaving seat
+        userStatusService.clearUserConsumables(userId, roomId, seatId);
         
         room.freeSeat(seatId);
         saveRoom(room);
