@@ -42,12 +42,7 @@ public class UserStatusService {
     private static final String CONSUMABLES_KEY_PATTERN = "cafe:room:%s:user:%s:consumables";
     private static final String USER_PRESENCE_KEY_PATTERN = "cafe:room:%s:seat:%d:user:%s:presence";
     
-    // Default consumption durations (in seconds)
-    private static final Map<String, Integer> DEFAULT_DURATIONS = Map.of(
-        "DRINK", 300,    // 5 minutes for drinks
-        "FOOD", 600,     // 10 minutes for food
-        "DESSERT", 240   // 4 minutes for desserts
-    );
+    // Note: Consumption durations are now defined per menu item in the JSON configuration
     
     public UserStatusService() {
         this.objectMapper = new ObjectMapper();
@@ -73,8 +68,8 @@ public class UserStatusService {
             return;
         }
         
-        // Determine consumption duration based on item type
-        int duration = DEFAULT_DURATIONS.getOrDefault(menuItem.getType().name(), 300);
+        // Use consumption duration from menu item configuration
+        int duration = menuItem.getConsumptionTimeSeconds();
         
         Consumable consumable = new Consumable(
             menuItem.getId(),
@@ -289,14 +284,25 @@ public class UserStatusService {
             // Remove expiration since user has returned
             redisTemplate.persist(key);
             
-            // Update seat information in consumables to reflect new seat
-            updateConsumableSeats(consumables, seatId);
-            saveConsumables(userId, roomId, seatId, consumables);
+            // Filter out expired consumables before restoration
+            List<Consumable> validConsumables = new ArrayList<>();
+            for (Consumable consumable : consumables) {
+                if (!consumable.isExpired()) {
+                    validConsumables.add(consumable);
+                } else {
+                    logger.info("Skipping expired consumable {} during restoration for user {}", 
+                               consumable.getItemName(), userId);
+                }
+            }
             
-            logger.info("Restored {} consumables for user {} in room {} seat {} (consumables follow user)", 
-                       consumables.size(), userId, roomId, seatId);
+            // Update seat information in valid consumables to reflect new seat
+            updateConsumableSeats(validConsumables, seatId);
+            saveConsumables(userId, roomId, seatId, validConsumables);
             
-            // Broadcast restored status
+            logger.info("Restored {} valid consumables (filtered out {} expired) for user {} in room {} seat {}", 
+                       validConsumables.size(), consumables.size() - validConsumables.size(), userId, roomId, seatId);
+            
+            // Broadcast restored status (only valid consumables)
             broadcastUserStatusUpdate(userId, roomId, seatId);
         } else {
             logger.debug("No consumables to restore for user {} in room {} seat {} (consumables follow user)", userId, roomId, seatId);

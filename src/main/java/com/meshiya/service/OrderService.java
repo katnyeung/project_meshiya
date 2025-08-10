@@ -214,6 +214,7 @@ public class OrderService {
      */
     private void serveOrder(Order order) {
         order.setStatus(OrderStatus.SERVED);
+        order.setServedTime(LocalDateTime.now());
         notifyStatusChange(order, OrderStatus.SERVED);
         
         // Send served message to specific user
@@ -231,6 +232,9 @@ public class OrderService {
         
         // Update persisted orders
         persistUserOrders(order.getUserId());
+        
+        // Schedule automatic cleanup based on consumable duration
+        scheduleAutomaticOrderCompletion(order);
         
         logger.info("Order served: {} to {}", order.getMenuItem().getName(), order.getUserName());
     }
@@ -294,6 +298,75 @@ public class OrderService {
             }
             logger.debug("Cleaned up order: {}", orderId);
         }
+    }
+    
+    /**
+     * Schedules automatic order completion based on consumable duration
+     */
+    private void scheduleAutomaticOrderCompletion(Order order) {
+        // Get duration from the menu item configuration
+        int durationSeconds = order.getMenuItem().getConsumptionTimeSeconds();
+        
+        Timer timer = new Timer();
+        timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                logger.info("Auto-completing expired order: {} for {}", 
+                           order.getMenuItem().getName(), order.getUserName());
+                completeOrder(order.getUserId(), order.getOrderId());
+            }
+        }, durationSeconds * 1000);
+        
+        logger.debug("Scheduled automatic completion for order {} in {} seconds", 
+                    order.getOrderId(), durationSeconds);
+    }
+    
+    /**
+     * Cleans up existing served orders that don't have automatic cleanup scheduled
+     * This method can be called to clean up legacy orders
+     */
+    public synchronized void cleanupExpiredServedOrders() {
+        LocalDateTime currentTime = LocalDateTime.now();
+        List<String> ordersToCleanup = new ArrayList<>();
+        
+        for (Order order : activeOrders.values()) {
+            if (order.getStatus() == OrderStatus.SERVED && order.getServedTime() != null) {
+                // Calculate how long the order has been served in seconds
+                long servedDurationSeconds = java.time.Duration.between(order.getServedTime(), currentTime).getSeconds();
+                
+                // Get expected duration from menu item configuration
+                int expectedDurationSeconds = order.getMenuItem().getConsumptionTimeSeconds();
+                
+                // If served longer than expected duration, mark for cleanup
+                if (servedDurationSeconds > expectedDurationSeconds) {
+                    ordersToCleanup.add(order.getOrderId());
+                    logger.info("Marking expired served order for cleanup: {} (served {}s ago)", 
+                               order.getOrderId(), servedDurationSeconds);
+                }
+            }
+        }
+        
+        // Clean up expired orders
+        for (String orderId : ordersToCleanup) {
+            Order order = activeOrders.get(orderId);
+            if (order != null) {
+                logger.info("Auto-completing expired served order: {} for {}", 
+                           order.getMenuItem().getName(), order.getUserName());
+                completeOrder(order.getUserId(), orderId);
+            }
+        }
+        
+        if (!ordersToCleanup.isEmpty()) {
+            logger.info("Cleaned up {} expired served orders", ordersToCleanup.size());
+        }
+    }
+    
+    /**
+     * Scheduled cleanup of expired served orders - runs every 5 minutes
+     */
+    @Scheduled(fixedRate = 300000) // 5 minutes
+    public void scheduledCleanupExpiredOrders() {
+        cleanupExpiredServedOrders();
     }
     
     /**
@@ -435,8 +508,25 @@ public class OrderService {
                 userStatusService.clearUserConsumablesForRestore(userId, roomId, seatId);
                 
                 for (Order order : orders) {
-                    // Only restore orders that are still relevant (SERVED status)
+                    // Only restore orders that are still relevant (SERVED status) and not expired
                     if (order.getStatus() == OrderStatus.SERVED) {
+                        // Check if this order should have expired by now
+                        LocalDateTime now = LocalDateTime.now();
+                        LocalDateTime servedTime = order.getServedTime();
+                        int expectedDurationSeconds = order.getMenuItem().getConsumptionTimeSeconds();
+                        
+                        if (servedTime != null) {
+                            long servedDurationSeconds = java.time.Duration.between(servedTime, now).getSeconds();
+                            
+                            if (servedDurationSeconds > expectedDurationSeconds) {
+                                // This order should have expired - mark as consuming instead of restoring
+                                logger.info("Order {} has expired (served {}s ago, expected {}s) - marking as consuming", 
+                                           order.getOrderId(), servedDurationSeconds, expectedDurationSeconds);
+                                order.setStatus(OrderStatus.CONSUMING);
+                                continue; // Don't restore this expired order
+                            }
+                        }
+                        
                         activeOrders.put(order.getOrderId(), order);
                         userCurrentOrders.computeIfAbsent(userId, k -> new HashSet<>()).add(order.getOrderId());
                         

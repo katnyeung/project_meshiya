@@ -1,0 +1,118 @@
+{
+  "drinks": [
+    {
+      "id": "tea_green",
+      "name": "Green Tea",
+      "description": "Warm and soothing green tea",
+      "type": "DRINK",
+      "preparationTimeSeconds": 30,
+      "consumptionTimeSeconds": 300,
+      "mood": "contemplative",
+      "season": "all"
+    },
+    {
+      "id": "tea_oolong",
+      "name": "Oolong Tea", 
+      "description": "Rich oolong tea for quiet moments",
+      "type": "DRINK",
+      "preparationTimeSeconds": 30,
+      "consumptionTimeSeconds": 300,
+      "mood": "nostalgic",
+      "season": "all"
+    },
+    {
+      "id": "sake_warm",
+      "name": "Warm Sake",
+      "description": "Traditional warm sake",
+      "type": "DRINK", 
+      "preparationTimeSeconds": 45,
+      "consumptionTimeSeconds": 600,
+      "mood": "reflective",
+      "season": "winter"
+    },
+    {
+      "id": "beer",
+      "name": "Beer",
+      "description": "Cold beer for the evening",
+      "type": "DRINK",
+      "preparationTimeSeconds": 15,
+      "consumptionTimeSeconds": 180,
+      "mood": "casual",
+      "season": "summer"
+    }
+  ],
+  "food": [
+    {
+      "id": "ramen_miso",
+      "name": "Miso Ramen",
+      "description": "Hearty miso ramen with soft-boiled egg",
+      "type": "FOOD",
+      "preparationTimeSeconds": 180,
+      "consumptionTimeSeconds": 600,
+      "mood": "comforting",
+      "season": "winter"
+    },
+    {
+      "id": "tamagoyaki", 
+      "name": "Tamagoyaki",
+      "description": "Sweet Japanese rolled omelet",
+      "type": "FOOD",
+      "preparationTimeSeconds": 120,
+      "consumptionTimeSeconds": 480,
+      "mood": "nostalgic", 
+      "season": "all"
+    },
+    {
+      "id": "onigiri",
+      "name": "Onigiri",
+      "description": "Rice ball with umeboshi",
+      "type": "FOOD",
+      "preparationTimeSeconds": 60,
+      "consumptionTimeSeconds": 300,
+      "mood": "simple",
+      "season": "all"
+    },
+    {
+      "id": "yakitori",
+      "name": "Yakitori", 
+      "description": "Grilled chicken skewers",
+      "type": "FOOD",
+      "preparationTimeSeconds": 150,
+      "consumptionTimeSeconds": 420,
+      "mood": "social",
+      "season": "all"
+    },
+    {
+      "id": "gyoza",
+      "name": "Gyoza",
+      "description": "Pan-fried dumplings",
+      "type": "FOOD",
+      "preparationTimeSeconds": 120,
+      "consumptionTimeSeconds": 360,
+      "mood": "comforting",
+      "season": "all"
+    }
+  ],
+  "desserts": [
+    {
+      "id": "mochi_ice",
+      "name": "Mochi Ice Cream",
+      "description": "Sweet mochi with ice cream",
+      "type": "DESSERT",
+      "preparationTimeSeconds": 30,
+      "consumptionTimeSeconds": 240,
+      "mood": "sweet",
+      "season": "summer"
+    },
+    {
+      "id": "dorayaki",
+      "name": "Dorayaki", 
+      "description": "Pancake sandwich with sweet filling",
+      "type": "DESSERT",
+      "preparationTimeSeconds": 60,
+      "consumptionTimeSeconds": 300,
+      "mood": "childhood",
+      "season": "all"
+    }
+  ]
+}

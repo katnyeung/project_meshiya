@@ -1,5 +1,6 @@
 package com.meshiya.service;
 
+import com.meshiya.config.MasterConfiguration;
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.*;
 import org.slf4j.Logger;
@@ -34,6 +35,9 @@ public class MasterService {
     
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+    
+    @Autowired
+    private MasterConfiguration.MasterConfig masterConfig;
     
     // Status management
     private MasterStatus currentStatus = MasterStatus.IDLE;
@@ -75,67 +79,12 @@ public class MasterService {
         }
     }
     
-    // Master's personality system prompt
-    private final String SYSTEM_PROMPT = """
-        You are the Master of a late-night diner called "Meshiya" (Midnight Diner), inspired by the anime Shin'ya Shokudō.
-        
-        ## Your Character:
-        - A wise, observant man in his 50s who runs a small diner open from midnight to 7am
-        - You've seen countless late-night stories and human dramas unfold at your counter
-        - You're a good conversationalist who engages naturally with customers
-        - You create a safe, non-judgmental space where people can be themselves
-        - You have a gentle, paternal presence that puts people at ease
-        - You prepare food and drinks with care and attention
-        - You enjoy the human connection that comes with late-night conversations
-        
-        ## Your Response Style:
-        - Respond naturally and conversationally (2-4 sentences is fine)
-        - Engage with customers in a warm, genuine way
-        - Ask thoughtful questions that show you're listening and care
-        - Share brief observations about life, food, or human nature when appropriate
-        - Reference the late hour, the atmosphere, or the comfort of simple food naturally
-        - Be supportive without preaching - guide people to their own insights
-        - Use occasional brief responses like "Mm." only when they truly fit the moment
-        
-        ## Menu and Ordering:
-        - When customers ask about the menu, briefly describe available items
-        - Suggest items based on their mood or situation
-        - When taking orders, acknowledge them warmly
-        - Sometimes comment on the food while preparing it
-        - Let customers know when food is ready in a gentle way
-        
-        ## Available Items:
-        DRINKS: Green Tea, Oolong Tea, Warm Sake, Beer
-        FOOD: Miso Ramen, Tamagoyaki, Onigiri, Yakitori, Gyoza  
-        DESSERTS: Mochi Ice Cream, Dorayaki
-        
-        ## The Setting:
-        - It's late at night (between midnight and dawn)
-        - Customers sit at your counter, sharing stories over simple food and drinks
-        - The atmosphere is intimate, warm, and contemplative
-        - People come here when they need to think, talk, or find comfort
-        
-        ## Your Responses Should:
-        - Acknowledge the human emotion or situation being shared
-        - Sometimes ask a gentle question that promotes self-reflection
-        - Reference universal human experiences
-        - Be brief but emotionally resonant
-        - Occasionally mention food, drink, or the late-night atmosphere
-        - Help with menu questions and orders naturally
-        
-        ## Example Response Patterns:
-        - "What does your heart tell you? Sometimes we know the answer but need to hear ourselves say it."
-        - "The night has a way of making things clearer. I've seen many people find their path at this counter."
-        - "Sometimes the simplest food feeds more than the stomach. A warm bowl can heal more than just hunger."
-        - "People find their way here when they need to. What brought you in tonight?"
-        - "What calls to you tonight? I have warm tea, hearty ramen, or something stronger if you prefer."
-        - "I'll prepare that for you. It's one of my favorites to make - the smell always fills the diner nicely."
-        - "*nods while polishing a glass* You know, I've heard that story before. Different faces, same human struggles."
-        - "Interesting perspective. How long have you been thinking about this?"
-        - "The late hours do something to us, don't they? Strip away the pretenses we carry during the day."
-        
-        Remember: You are not a therapist, but you are someone who genuinely cares about the people who come to your diner. You've heard countless stories and learned that sometimes people just need someone to listen and engage with them genuinely.
-        """;
+    /**
+     * Gets the system prompt from configuration
+     */
+    private String getSystemPrompt() {
+        return masterConfig.getPersonality().getSystemPrompt();
+    }
     
     // ===== STATUS MANAGEMENT METHODS =====
     
@@ -420,7 +369,7 @@ public class MasterService {
      * Builds the complete prompt for LLM
      */
     private String buildLLMPrompt(String conversationContext) {
-        return SYSTEM_PROMPT + "\n\n" + 
+        return getSystemPrompt() + "\n\n" + 
                "## Current Situation:\n" + 
                conversationContext + 
                "\n\n## Instructions:\n" +
@@ -453,7 +402,7 @@ public class MasterService {
             logger.info("Extracted user prompt (length: {}): \n{}", 
                        userPrompt.length(), userPrompt.length() > 1500 ? userPrompt.substring(0, 1500) + "..." : userPrompt);
             
-            String response = llmApiService.callLlm(SYSTEM_PROMPT, userPrompt);
+            String response = llmApiService.callLlm(getSystemPrompt(), userPrompt);
             
             if (response != null && !response.trim().isEmpty()) {
                 logger.info("LLM returned valid response: {}", response);
@@ -482,7 +431,7 @@ public class MasterService {
             return fullPrompt.substring(startIndex);
         } else {
             // Fallback: return everything after system prompt
-            return fullPrompt.substring(SYSTEM_PROMPT.length());
+            return fullPrompt.substring(getSystemPrompt().length());
         }
     }
     
@@ -502,74 +451,41 @@ public class MasterService {
         }
         String content = allContent.toString();
         
-        // Reduce silence probability - Master should be more conversational
-        if (Math.random() < 0.05) { // Only 5% chance of silence - Master enjoys conversation
-            logger.info("Fallback decided Master should remain silent");
+        // Check silence probability from configuration
+        double silenceProbability = masterConfig.getSettings() != null ? 
+            masterConfig.getSettings().getSilenceProbability() : 0.05;
+        if (Math.random() < silenceProbability) {
+            logger.info("Fallback decided Master should remain silent (probability: {})", silenceProbability);
             return null;
         }
         
         // Context-based responses
         if (content.contains("food") || content.contains("eat") || content.contains("hungry") || content.contains("menu")) {
-            return chooseRandom(Arrays.asList(
-                "The simplest dishes often comfort the most. I've found that good food has a way of making difficult conversations easier.",
-                "What calls to you tonight? I have some excellent miso ramen that's perfect for these late hours.",
-                "Food tastes different in the quiet hours, doesn't it? There's something about eating slowly, savoring each bite when the world is still.",
-                "Hunger comes in many forms. Sometimes we need nourishment for the body, sometimes for the soul."
-            ));
+            return chooseRandom(getFallbackResponses("food"));
         }
         
         if (content.contains("drink") || content.contains("beer") || content.contains("sake") || content.contains("tea")) {
-            return chooseRandom(Arrays.asList(
-                "Something warm for the soul? Tea has a way of settling both the mind and the moment.",
-                "The right drink finds you when needed. What would suit your mood tonight?",
-                "I find that sharing a drink makes conversations flow more naturally. What draws you to the bottle tonight?",
-                "*slides a glass across the counter* Sometimes a drink is just an excuse to sit a while longer."
-            ));
+            return chooseRandom(getFallbackResponses("drink"));
         }
         
         if (content.contains("work") || content.contains("job") || content.contains("office") || content.contains("boss")) {
-            return chooseRandom(Arrays.asList(
-                "Work follows us even into the night, doesn't it? I see many people carrying their office troubles to this counter.",
-                "What matters most to you beyond the paycheck? Sometimes we lose sight of that in the daily grind.",
-                "The diner is far from all that workplace stress. How long has this been weighing on you?",
-                "I've served countless office workers over the years. The stories are different, but the exhaustion is always the same."
-            ));
+            return chooseRandom(getFallbackResponses("work"));
         }
         
         if (content.contains("love") || content.contains("relationship") || content.contains("girlfriend") || content.contains("boyfriend")) {
-            return chooseRandom(Arrays.asList(
-                "The heart knows what it needs, even when the mind tries to argue otherwise. What does yours tell you?",
-                "Love is like cooking - timing matters, but so does the quality of the ingredients you bring to it.",
-                "What would you do if fear wasn't a factor? Sometimes that's the clearest way to see our path forward.",
-                "Relationship troubles? I've heard every variation at this counter. The situations change, but human hearts remain remarkably similar."
-            ));
+            return chooseRandom(getFallbackResponses("love"));
         }
         
         if (content.contains("tired") || content.contains("sleep") || content.contains("late") || content.contains("night")) {
-            return chooseRandom(Arrays.asList(
-                "The night holds what the day cannot - a different kind of clarity, a quieter truth. Is that what brought you here?",
-                "Rest comes to those who seek it, but sometimes we need to work through something first. What's keeping your mind awake?",
-                "Late hours reveal our truest selves, don't they? Without the day's distractions, we face what we really think and feel.",
-                "I've kept these late hours for decades. There's something honest about the deep night that draws certain people."
-            ));
+            return chooseRandom(getFallbackResponses("tired"));
         }
         
         if (content.contains("sad") || content.contains("lonely") || content.contains("alone") || content.contains("depressed")) {
-            return chooseRandom(Arrays.asList(
-                "You're not alone in this place. I've seen that particular sadness before - it's more common than people realize.",
-                "Sadness passes like the night, but it needs its time to flow through us properly. What's behind yours?",
-                "What brings you here tonight? Sometimes talking to someone who's heard it all can help lighten the load.",
-                "Loneliness has a way of driving people to places like this. But connection can happen in the most unexpected moments."
-            ));
+            return chooseRandom(getFallbackResponses("sad"));
         }
         
         if (content.contains("problem") || content.contains("trouble") || content.contains("difficult") || content.contains("help")) {
-            return chooseRandom(Arrays.asList(
-                "The answer often hides in the question itself. What do you think your instincts are telling you?",
-                "What would you tell a friend in your situation? Sometimes we give better advice than we follow.",
-                "Sometimes we already know what to do, but need someone to listen while we work through it. Tell me more.",
-                "Problems have a way of feeling overwhelming in the dark hours. But breaking them down, piece by piece, can help."
-            ));
+            return chooseRandom(getFallbackResponses("problem"));
         }
         
         // Check for positive reactions to food/drinks
@@ -581,12 +497,13 @@ public class MasterService {
             if (userId != null && !"ai_master".equals(userId)) {
                 Optional<Order> userOrder = orderService.getUserCurrentOrder(userId);
                 if (userOrder.isPresent()) {
-                    return chooseRandom(Arrays.asList(
+                    List<String> positiveResponses = Arrays.asList(
                         "*nods approvingly*",
                         "Good food feeds more than the stomach.",
                         "The simple pleasures matter most.",
                         "*continues work with a slight smile*"
-                    ));
+                    );
+                    return chooseRandom(positiveResponses);
                 }
             }
         }
@@ -597,42 +514,31 @@ public class MasterService {
         if (userId != null && !"ai_master".equals(userId)) {
             Optional<Order> userOrder = orderService.getUserCurrentOrder(userId);
             if (userOrder.isPresent() && userOrder.get().getStatus() == OrderStatus.SERVED) {
-                return chooseRandom(Arrays.asList(
-                    "How is your " + userOrder.get().getMenuItem().getName() + "?",
-                    "*watches you enjoy the " + userOrder.get().getMenuItem().getName() + "*",
-                    "The " + userOrder.get().getMenuItem().getName() + " suits you."
-                ));
+                String itemName = userOrder.get().getMenuItem().getName();
+                List<String> orderResponses = Arrays.asList(
+                    "How is your " + itemName + "?",
+                    "*watches you enjoy the " + itemName + "*",
+                    "The " + itemName + " suits you."
+                );
+                return chooseRandom(orderResponses);
             }
         }
         
         // Handle unclear or random messages with gentle Master responses
         if (content.matches(".*[a-z]{4,}.*") && !content.matches(".*\\s.*")) {
             // Looks like random text or typos
-            return chooseRandom(Arrays.asList(
+            List<String> confusionResponses = Arrays.asList(
                 "Sometimes words escape us in the late hours, don't they? The mind moves faster than the fingers.",
                 "The mind wanders when the night grows deep. Are you trying to say something specific?",
                 "*looks up with understanding eyes* Take your time. There's no rush here.",
                 "What weighs on you tonight? Sometimes it helps to start with whatever's on top.",
                 "Even silence speaks here, but I sense you have something more to share when you're ready."
-            ));
+            );
+            return chooseRandom(confusionResponses);
         }
         
         // General conversation responses - more varied and conversational
-        return chooseRandom(Arrays.asList(
-            "The night brings many stories to this counter. Each one different, but somehow familiar.",
-            "Such is life in the quiet hours - we show our truest selves when the world isn't watching.",
-            "*nods while cleaning a glass* I've heard that tone before. What's really on your mind?",
-            "People find their way here when they need to talk, or just be understood. Which is it for you tonight?",
-            "The diner holds many secrets, but it also keeps them safe. You can speak freely here.",
-            "What brings you to the counter tonight? There's usually a reason when someone ventures out this late.",
-            "Sometimes we all need a place to sit and think without judgment. You've found the right spot.",
-            "*glances up briefly, then back to work* You know, I can tell when someone has something weighing on them.",
-            "The late hours reveal much about us - our fears, our hopes, our real priorities. What are yours revealing?",
-            "A cup of tea, perhaps? Or would you prefer something stronger? Either way, I'm here to listen.",
-            "Interesting. Tell me more about that.",
-            "I've been running this place for years, and certain conversations never get old. What's your story?",
-            "The quiet hours have their own rhythm, don't they? Perfect for the kind of talk that matters."
-        ));
+        return chooseRandom(getFallbackResponses("general"));
     }
     
     /**
@@ -763,9 +669,24 @@ public class MasterService {
     }
     
     /**
+     * Gets fallback responses from configuration for a given category
+     */
+    private List<String> getFallbackResponses(String category) {
+        if (masterConfig.getFallbackResponses() != null && 
+            masterConfig.getFallbackResponses().containsKey(category)) {
+            return masterConfig.getFallbackResponses().get(category);
+        }
+        // Return default empty list if category not found
+        return new ArrayList<>();
+    }
+    
+    /**
      * Helper method to choose random response
      */
     private String chooseRandom(List<String> options) {
+        if (options.isEmpty()) {
+            return "I'm listening."; // Safe fallback
+        }
         return options.get(new Random().nextInt(options.size()));
     }
 }

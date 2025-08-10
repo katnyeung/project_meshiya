@@ -12,6 +12,7 @@ public class Order {
     private OrderStatus status;
     private LocalDateTime orderTime;
     private LocalDateTime estimatedReadyTime;
+    private LocalDateTime servedTime;
     private Integer seatId;
     
     // Constructors
@@ -53,6 +54,9 @@ public class Order {
     public void setEstimatedReadyTime(LocalDateTime estimatedReadyTime) { 
         this.estimatedReadyTime = estimatedReadyTime; 
     }
+    
+    public LocalDateTime getServedTime() { return servedTime; }
+    public void setServedTime(LocalDateTime servedTime) { this.servedTime = servedTime; }
     
     public Integer getSeatId() { return seatId; }
     public void setSeatId(Integer seatId) { this.seatId = seatId; }

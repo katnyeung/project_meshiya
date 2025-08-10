@@ -19,6 +19,9 @@ public class MenuItem {
     @JsonProperty("preparationTime")
     private int preparationTimeSeconds;
     
+    @JsonProperty("consumptionTime")
+    private int consumptionTimeSeconds;
+    
     @JsonProperty("mood")
     private String mood;
     
@@ -29,12 +32,13 @@ public class MenuItem {
     public MenuItem() {}
     
     public MenuItem(String id, String name, String description, MenuItemType type, 
-                   int preparationTimeSeconds, String mood, String season) {
+                   int preparationTimeSeconds, int consumptionTimeSeconds, String mood, String season) {
         this.id = id;
         this.name = name;
         this.description = description;
         this.type = type;
         this.preparationTimeSeconds = preparationTimeSeconds;
+        this.consumptionTimeSeconds = consumptionTimeSeconds;
         this.mood = mood;
         this.season = season;
     }
@@ -55,6 +59,11 @@ public class MenuItem {
     public int getPreparationTimeSeconds() { return preparationTimeSeconds; }
     public void setPreparationTimeSeconds(int preparationTimeSeconds) { 
         this.preparationTimeSeconds = preparationTimeSeconds; 
+    }
+    
+    public int getConsumptionTimeSeconds() { return consumptionTimeSeconds; }
+    public void setConsumptionTimeSeconds(int consumptionTimeSeconds) {
+        this.consumptionTimeSeconds = consumptionTimeSeconds;
     }
     
     public String getMood() { return mood; }
