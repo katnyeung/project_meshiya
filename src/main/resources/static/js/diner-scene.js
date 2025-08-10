@@ -549,10 +549,17 @@ class DinerScene {
             const isCurrentUser = message.userId === window.wsClient?.userId;
             this.updateSeatState(seatNumber, true, isCurrentUser);
             
+            // If this is the current user moving seats, clear old user status sprites
+            if (isCurrentUser) {
+                console.log(`Current user joining seat ${seatNumber}, clearing old status sprites`);
+                this.clearUserStatusSpritesForCurrentUser();
+            }
+            
             // Add customer avatar
             this.addCustomerToSeat(seatNumber, isCurrentUser);
             
         } else if (message.type === 'LEAVE_SEAT') {
+            const leavingUserId = message.userId;
             this.seatStates.set(seatNumber, { 
                 occupied: false, 
                 userId: null 
@@ -563,6 +570,9 @@ class DinerScene {
             
             // Remove customer avatar
             this.removeCustomerFromSeat(seatNumber);
+            
+            // Clear user status sprite for this seat when user leaves
+            this.hideUserStatusSprite(seatNumber);
             
         } else if (message.type === 'SEAT_STATE') {
             // Handle initial seat state loading
@@ -742,17 +752,39 @@ class DinerScene {
             return;
         }
         
-        // Create content text
-        const content = consumables.map(c => {
+        // Create content text with improved deduplication
+        const uniqueConsumables = this.deduplicateConsumables(consumables);
+        const content = uniqueConsumables.map(c => {
             const minutes = Math.floor((c.remainingSeconds || 0) / 60);
             const seconds = (c.remainingSeconds || 0) % 60;
             const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
             return `${c.itemName} ${timeStr}`;
         }).join('\n');
         
-        const canvas = this.createUserStatusCanvas(content);
-        statusSprite.material.map = new THREE.CanvasTexture(canvas);
-        statusSprite.material.needsUpdate = true;
+        console.log(`Updating sprite for seat ${seatId} with ${uniqueConsumables.length} items:`, content);
+        
+        // Always update but cache the canvas to reduce recreation overhead
+        if (!statusSprite.userData) {
+            statusSprite.userData = {};
+        }
+        
+        // Only recreate canvas if content structure changed (not just timers)
+        const itemSignature = uniqueConsumables.map(c => `${c.itemName}_${c.orderId || c.itemId}`).join('|');
+        const lastSignature = statusSprite.userData.itemSignature;
+        
+        if (lastSignature !== itemSignature) {
+            console.log(`Content structure changed for seat ${seatId}, recreating canvas`);
+            const canvas = this.createUserStatusCanvas(content);
+            statusSprite.material.map = new THREE.CanvasTexture(canvas);
+            statusSprite.material.needsUpdate = true;
+            statusSprite.userData.itemSignature = itemSignature;
+        } else {
+            // Just update the existing canvas with new times
+            const canvas = this.createUserStatusCanvas(content);
+            statusSprite.material.map.image = canvas;
+            statusSprite.material.map.needsUpdate = true;
+        }
+        
         statusSprite.visible = true;
     }
     
@@ -769,6 +801,33 @@ class DinerScene {
         }
     }
     
+    clearAllUserStatusSprites() {
+        // Hide all user status sprites (used when user changes seats)
+        for (let i = 0; i < this.sprites.userStatusBoxes.length; i++) {
+            this.sprites.userStatusBoxes[i].visible = false;
+        }
+    }
+    
+    clearUserStatusSpritesForCurrentUser() {
+        // More targeted clearing - only for current user when they change seats
+        if (!window.wsClient?.userId) return;
+        
+        const currentUserId = window.wsClient.userId;
+        
+        // Only hide sprites for the current user by checking which seats they were in
+        if (window.userStatusManager && window.userStatusManager.userStatuses) {
+            window.userStatusManager.userStatuses.forEach((statusData, seatId) => {
+                if (statusData.userId === currentUserId) {
+                    // Only hide sprites for the current user's old seat
+                    this.hideUserStatusSprite(seatId);
+                    console.log(`Cleared status sprite for current user's old seat ${seatId}`);
+                }
+            });
+        }
+        
+        console.log('Cleared user status sprites only for current user seat change');
+    }
+    
     // Helper method to draw rounded rectangles (browser compatibility)
     drawRoundedRect(ctx, x, y, width, height, radius) {
         ctx.beginPath();
@@ -782,6 +841,49 @@ class DinerScene {
         ctx.lineTo(x, y + radius);
         ctx.quadraticCurveTo(x, y, x + radius, y);
         ctx.closePath();
+    }
+
+    // Helper method to remove duplicate consumables (frontend safety check)
+    deduplicateConsumables(consumables) {
+        // More lenient deduplication: only remove exact object duplicates
+        const seen = new Map();
+        const result = [];
+        
+        for (const consumable of consumables) {
+            // Use orderId as primary key, fall back to name+startTime for legacy items
+            const primaryKey = consumable.orderId || consumable.itemId;
+            const fallbackKey = `${consumable.itemName}_${consumable.startTime || Date.now()}`;
+            const key = primaryKey || fallbackKey;
+            
+            // Only filter if we've seen the exact same order/item
+            if (!seen.has(key)) {
+                seen.set(key, consumable);
+                result.push(consumable);
+            } else {
+                // Only filter if times are very similar (within 5 seconds)
+                const existing = seen.get(key);
+                const timeDiff = Math.abs((existing.remainingSeconds || 0) - (consumable.remainingSeconds || 0));
+                if (timeDiff > 5) {
+                    // Different enough to be a separate item
+                    result.push(consumable);
+                    console.log(`Allowing similar consumable with time difference: ${consumable.itemName}`);
+                } else {
+                    console.log(`Filtered duplicate consumable: ${consumable.itemName}`);
+                }
+            }
+        }
+        
+        // Sort by remaining time (longest first) for better display
+        result.sort((a, b) => (b.remainingSeconds || 0) - (a.remainingSeconds || 0));
+        
+        // Limit total items to prevent UI overflow
+        const maxItems = 6;
+        if (result.length > maxItems) {
+            console.log(`Limiting consumables from ${result.length} to ${maxItems} items`);
+            return result.slice(0, maxItems);
+        }
+        
+        return result;
     }
 
     getSeatStates() {

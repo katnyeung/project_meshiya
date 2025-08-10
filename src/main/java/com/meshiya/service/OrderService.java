@@ -5,9 +5,12 @@ import com.meshiya.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -19,6 +22,7 @@ import java.util.function.BiConsumer;
 public class OrderService {
     
     private static final Logger logger = LoggerFactory.getLogger(OrderService.class);
+    private static final String USER_ORDERS_KEY_PREFIX = "user_orders:";
     
     @Autowired
     private MenuService menuService;
@@ -31,6 +35,9 @@ public class OrderService {
     
     @Autowired
     private UserStatusService userStatusService;
+    
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
     
     // Order queue management
     private final Queue<Order> orderQueue = new ConcurrentLinkedQueue<>();
@@ -89,6 +96,9 @@ public class OrderService {
         orderQueue.offer(order);
         activeOrders.put(orderId, order);
         userCurrentOrders.computeIfAbsent(userId, k -> new HashSet<>()).add(orderId);
+        
+        // Persist user orders to Redis
+        persistUserOrders(userId);
         
         notifyStatusChange(order, OrderStatus.ORDERED);
         
@@ -218,6 +228,9 @@ public class OrderService {
         
         // Add consumable to user status
         userStatusService.addConsumable(order.getUserId(), order.getRoomId(), order.getSeatId(), order.getMenuItem());
+        
+        // Update persisted orders
+        persistUserOrders(order.getUserId());
         
         logger.info("Order served: {} to {}", order.getMenuItem().getName(), order.getUserName());
     }
@@ -382,6 +395,82 @@ public class OrderService {
         messagingTemplate.convertAndSend("/topic/master-visual", visualState);
         logger.debug("Master visual state updated: {} - {}", action, itemType);
     }
+    
+    /**
+     * Persist user orders to Redis
+     */
+    private void persistUserOrders(String userId) {
+        try {
+            Set<String> orderIds = userCurrentOrders.get(userId);
+            if (orderIds != null) {
+                List<Order> orders = orderIds.stream()
+                    .map(activeOrders::get)
+                    .filter(Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toList());
+                    
+                if (!orders.isEmpty()) {
+                    redisTemplate.opsForValue().set(
+                        USER_ORDERS_KEY_PREFIX + userId, 
+                        objectMapper.writeValueAsString(orders)
+                    );
+                    logger.debug("Persisted {} orders for user {}", orders.size(), userId);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error persisting orders for user {}", userId, e);
+        }
+    }
+    
+    /**
+     * Restore user orders from Redis when they rejoin a seat
+     */
+    public synchronized void restoreUserOrders(String userId, String roomId, Integer seatId) {
+        try {
+            String ordersJson = (String) redisTemplate.opsForValue().get(USER_ORDERS_KEY_PREFIX + userId);
+            if (ordersJson != null) {
+                List<Order> orders = objectMapper.readValue(ordersJson, 
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Order.class));
+                
+                // Clear any existing consumables first to prevent duplication
+                userStatusService.clearUserConsumablesForRestore(userId, roomId, seatId);
+                
+                for (Order order : orders) {
+                    // Only restore orders that are still relevant (SERVED status)
+                    if (order.getStatus() == OrderStatus.SERVED) {
+                        activeOrders.put(order.getOrderId(), order);
+                        userCurrentOrders.computeIfAbsent(userId, k -> new HashSet<>()).add(order.getOrderId());
+                        
+                        // IMPORTANT: Recreate consumables for visual display with current seat info
+                        // This is what creates the status boxes that show "Green Tea 3:00", etc.
+                        // Use current seat info instead of old order seat info (for seat swapping)
+                        userStatusService.addConsumable(order.getUserId(), roomId, seatId, order.getMenuItem());
+                        
+                        logger.debug("Restored order {} with consumable for user {}", order.getOrderId(), userId);
+                    }
+                }
+                
+                if (!orders.isEmpty()) {
+                    logger.info("Restored {} orders for user {}", orders.size(), userId);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error restoring orders for user {}", userId, e);
+        }
+    }
+    
+    /**
+     * Clear persisted orders from Redis when user leaves permanently
+     */
+    public void clearPersistedOrders(String userId) {
+        try {
+            redisTemplate.delete(USER_ORDERS_KEY_PREFIX + userId);
+            logger.debug("Cleared persisted orders for user {}", userId);
+        } catch (Exception e) {
+            logger.error("Error clearing persisted orders for user {}", userId, e);
+        }
+    }
+    
+    private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
     
     /**
      * Generates unique order ID

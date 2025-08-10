@@ -167,7 +167,17 @@ public class RoomService {
         // Remove user from previous seat if they had one
         Integer previousSeat = room.getUserSeat(userId);
         if (previousSeat != null) {
+            logger.info("User {} moving from seat {} to seat {} in room {}", userId, previousSeat, seatId, roomId);
             room.freeSeat(previousSeat);
+            
+            // Transfer consumables to new seat (since consumables now follow user)
+            userStatusService.transferConsumablesOnSeatChange(userId, roomId, previousSeat, seatId);
+        } else {
+            // User joining for first time or rejoining after disconnect
+            logger.info("User {} joining seat {} in room {} (new or reconnecting)", userId, seatId, roomId);
+            
+            // Restore user's consumables when they rejoin
+            userStatusService.restoreUserConsumables(userId, roomId, seatId);
         }
         
         room.occupySeat(seatId, userId);
@@ -175,7 +185,7 @@ public class RoomService {
         
         // Broadcast seat update
         broadcastSeatUpdate(roomId, room.getSeatOccupancy());
-        logger.info("User {} joined seat {} in room {}", userId, seatId, roomId);
+        logger.info("User {} joined seat {} in room {} (consumables restored)", userId, seatId, roomId);
         return true;
     }
     

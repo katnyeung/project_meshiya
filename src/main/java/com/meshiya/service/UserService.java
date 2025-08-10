@@ -101,6 +101,14 @@ public class UserService {
     }
     
     /**
+     * Get user's current seat
+     */
+    public Integer getUserSeat(String userId) {
+        UserProfile profile = getUserProfile(userId);
+        return profile != null ? profile.getCurrentSeat() : null;
+    }
+    
+    /**
      * Get user profile from Redis
      */
     public UserProfile getUserProfile(String userId) {

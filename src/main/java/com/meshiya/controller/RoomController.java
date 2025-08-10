@@ -5,6 +5,8 @@ import com.meshiya.model.MessageType;
 import com.meshiya.service.RoomService;
 import com.meshiya.service.UserService;
 import com.meshiya.service.RoomSeatUserManager;
+import com.meshiya.service.OrderService;
+import com.meshiya.service.UserStatusService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +35,12 @@ public class RoomController {
     
     @Autowired
     private ApplicationEventPublisher eventPublisher;
+    
+    @Autowired
+    private OrderService orderService;
+    
+    @Autowired
+    private UserStatusService userStatusService;
 
     @MessageMapping("/room.join")
     public void joinRoom(@Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
@@ -100,8 +108,27 @@ public class RoomController {
         
         // Update centralized mapping and user profile if successful
         if (success) {
+            // Check if user was in another seat (for seat swapping)
+            Integer oldSeatId = userService.getUserSeat(userId);
+            
             roomSeatUserManager.joinSeat(roomId, seatId, userId, userName);
             userService.updateUserSeat(userId, seatId);
+            
+            // Handle consumables transfer for seat swapping
+            if (oldSeatId != null && !oldSeatId.equals(seatId)) {
+                // User is swapping seats - transfer consumables
+                logger.info("User {} swapping from seat {} to seat {}, transferring consumables", userName, oldSeatId, seatId);
+                userStatusService.transferConsumablesOnSeatChange(userId, roomId, oldSeatId, seatId);
+            } else if (!userStatusService.hasExistingConsumables(userId, roomId, seatId)) {
+                // Fresh join - restore orders only if no active consumables exist
+                // This prevents overwriting consumables that are still ticking down
+                orderService.restoreUserOrders(userId, roomId, seatId);
+                logger.info("Orders and consumables restored for user {} joining seat {} (fresh restore)", userName, seatId);
+            } else {
+                // User has existing consumables - just restore their status without recreating
+                logger.info("User {} joining seat {} - restoring existing consumables without reset", userName, seatId);
+                userStatusService.restoreUserConsumables(userId, roomId, seatId);
+            }
         }
         
         ChatMessage responseMessage = new ChatMessage();
@@ -150,5 +177,16 @@ public class RoomController {
             
             roomService.addMessageToRoom(roomId, responseMessage);
         }
+    }
+    
+    @MessageMapping("/user-status.refresh")
+    public void refreshUserStatus(@Payload ChatMessage message) {
+        String roomId = message.getRoomId() != null ? message.getRoomId() : DEFAULT_ROOM;
+        String userId = message.getUserId();
+        
+        logger.info("User {} requesting user status refresh for room {}", userId, roomId);
+        
+        // Send current user status for all users in the room
+        userStatusService.broadcastAllUserStatuses(roomId);
     }
 }

@@ -96,6 +96,11 @@ class WebSocketClient {
             userName: this.username,
             roomId: 'room1'
         }));
+        
+        // Request current user status data after connection
+        setTimeout(() => {
+            this.requestUserStatusRefresh();
+        }, 500);
     }
 
     onError(error) {
@@ -289,6 +294,29 @@ class WebSocketClient {
 
     generateUserId() {
         return 'user_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    /**
+     * Request a refresh of user status data from the server
+     */
+    requestUserStatusRefresh() {
+        if (!this.isConnected()) {
+            console.warn('Cannot request user status refresh - not connected');
+            return;
+        }
+        
+        console.log('🔄 Requesting user status refresh for all users');
+        
+        try {
+            this.stompClient.send("/app/user-status.refresh", {}, JSON.stringify({
+                roomId: 'room1',
+                userId: this.userId,
+                userName: this.username,
+                type: 'USER_STATUS_REFRESH'
+            }));
+        } catch (error) {
+            console.error('Failed to request user status refresh:', error);
+        }
     }
 
     disconnect() {

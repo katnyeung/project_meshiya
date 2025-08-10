@@ -93,6 +93,23 @@ class MeshiyaApp {
 
 // Initialize application when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+    // Ensure all classes are loaded before initialization
+    if (typeof DinerScene === 'undefined' || typeof UIManager === 'undefined' || typeof WebSocketClient === 'undefined') {
+        console.error('Required classes not loaded. Retrying in 100ms...');
+        setTimeout(() => {
+            if (typeof DinerScene !== 'undefined' && typeof UIManager !== 'undefined' && typeof WebSocketClient !== 'undefined') {
+                window.meshiya = new MeshiyaApp();
+            } else {
+                console.error('Classes still not loaded after retry:', {
+                    DinerScene: typeof DinerScene,
+                    UIManager: typeof UIManager, 
+                    WebSocketClient: typeof WebSocketClient
+                });
+            }
+        }, 100);
+        return;
+    }
+    
     // Create global app instance
     window.meshiya = new MeshiyaApp();
 });
@@ -101,6 +118,9 @@ document.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('beforeunload', () => {
     if (window.meshiya && window.meshiya.wsClient) {
         window.meshiya.wsClient.disconnect();
+    }
+    if (window.userStatusManager) {
+        window.userStatusManager.cleanup();
     }
 });
 
