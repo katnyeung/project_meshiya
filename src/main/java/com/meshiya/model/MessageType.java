@@ -12,5 +12,6 @@ public enum MessageType {
     DRINK_SERVED,
     MOOD_UPDATE,
     AI_MESSAGE,
-    SYSTEM_MESSAGE
+    SYSTEM_MESSAGE,
+    USER_STATUS_REFRESH
 }

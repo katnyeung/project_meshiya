@@ -11,7 +11,9 @@ class DinerScene {
             counter: null,
             master: null,
             seats: [],
-            customers: []
+            customers: [],
+            userStatusBoxes: [],
+            masterStatusLabel: null
         };
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
@@ -47,6 +49,9 @@ class DinerScene {
         
         // Create seats
         this.createSeats();
+        
+        // Create UI elements as sprites
+        this.createUISprites();
         
         // Add click handler for seat interaction
         this.renderer.domElement.addEventListener('click', (e) => this.handleCanvasClick(e));
@@ -544,10 +549,17 @@ class DinerScene {
             const isCurrentUser = message.userId === window.wsClient?.userId;
             this.updateSeatState(seatNumber, true, isCurrentUser);
             
+            // If this is the current user moving seats, clear old user status sprites
+            if (isCurrentUser) {
+                console.log(`Current user joining seat ${seatNumber}, clearing old status sprites`);
+                this.clearUserStatusSpritesForCurrentUser();
+            }
+            
             // Add customer avatar
             this.addCustomerToSeat(seatNumber, isCurrentUser);
             
         } else if (message.type === 'LEAVE_SEAT') {
+            const leavingUserId = message.userId;
             this.seatStates.set(seatNumber, { 
                 occupied: false, 
                 userId: null 
@@ -558,6 +570,9 @@ class DinerScene {
             
             // Remove customer avatar
             this.removeCustomerFromSeat(seatNumber);
+            
+            // Clear user status sprite for this seat when user leaves
+            this.hideUserStatusSprite(seatNumber);
             
         } else if (message.type === 'SEAT_STATE') {
             // Handle initial seat state loading
@@ -600,6 +615,275 @@ class DinerScene {
         this.camera.bottom = frustumSize / -2;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    createUISprites() {
+        // Create master status label sprite
+        this.createMasterStatusSprite();
+        
+        // Create user status box sprites for each seat
+        this.createUserStatusSprites();
+    }
+    
+    createMasterStatusSprite() {
+        const canvas = this.createMasterStatusCanvas('Idle', '#90ee90');
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        this.sprites.masterStatusLabel = new THREE.Sprite(material);
+        this.sprites.masterStatusLabel.position.set(0, 4.5, 5);
+        this.sprites.masterStatusLabel.scale.set(3, 0.8, 1);
+        this.sprites.masterStatusLabel.visible = false; // Initially hidden
+        this.scene.add(this.sprites.masterStatusLabel);
+    }
+    
+    createMasterStatusCanvas(text, color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 240;
+        canvas.height = 60;
+        const ctx = canvas.getContext('2d');
+        
+        // Background with rounded corners
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        this.drawRoundedRect(ctx, 5, 5, 230, 50, 10);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Text
+        ctx.fillStyle = color;
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 120, 30);
+        
+        return canvas;
+    }
+    
+    createUserStatusSprites() {
+        // Create status box sprites for seats 1-8
+        for (let i = 0; i < 8; i++) {
+            const canvas = this.createUserStatusCanvas('');
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const statusSprite = new THREE.Sprite(material);
+            
+            // Position above each seat
+            const seat = this.seats[i];
+            if (seat) {
+                statusSprite.position.set(seat.position.x, seat.position.y + 2, 3);
+                statusSprite.scale.set(2.5, 1, 1);
+            }
+            statusSprite.visible = false; // Initially hidden
+            
+            this.sprites.userStatusBoxes.push(statusSprite);
+            this.scene.add(statusSprite);
+        }
+    }
+    
+    createUserStatusCanvas(content) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 200;
+        canvas.height = 80;
+        const ctx = canvas.getContext('2d');
+        
+        if (!content) {
+            // Empty canvas for hidden state
+            return canvas;
+        }
+        
+        // Background with rounded corners
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 2;
+        this.drawRoundedRect(ctx, 2, 2, 196, 76, 4);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Text content
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        const lines = content.split('\n');
+        const lineHeight = 14;
+        const startY = 40 - ((lines.length - 1) * lineHeight / 2);
+        
+        lines.forEach((line, index) => {
+            ctx.fillText(line, 100, startY + index * lineHeight);
+        });
+        
+        return canvas;
+    }
+    
+    updateMasterStatusSprite(status, displayName) {
+        if (!this.sprites.masterStatusLabel) return;
+        
+        // Status color mapping
+        const colorMap = {
+            idle: '#90ee90',
+            thinking: '#87ceeb',
+            preparing_order: '#ffa500',
+            busy: '#ffa500',
+            serving: '#ff69b4',
+            cleaning: '#dda0dd',
+            conversing: '#20b2aa'
+        };
+        
+        const color = colorMap[status.toLowerCase()] || '#ffd700';
+        const text = displayName || status.replace('_', ' ');
+        
+        const canvas = this.createMasterStatusCanvas(text, color);
+        this.sprites.masterStatusLabel.material.map = new THREE.CanvasTexture(canvas);
+        this.sprites.masterStatusLabel.material.needsUpdate = true;
+        this.sprites.masterStatusLabel.visible = true;
+    }
+    
+    updateUserStatusSprite(seatId, consumables) {
+        const seatIndex = seatId - 1;
+        if (seatIndex < 0 || seatIndex >= this.sprites.userStatusBoxes.length) return;
+        
+        const statusSprite = this.sprites.userStatusBoxes[seatIndex];
+        if (!statusSprite) return;
+        
+        if (!consumables || consumables.length === 0) {
+            statusSprite.visible = false;
+            return;
+        }
+        
+        // Create content text with improved deduplication
+        const uniqueConsumables = this.deduplicateConsumables(consumables);
+        const content = uniqueConsumables.map(c => {
+            const minutes = Math.floor((c.remainingSeconds || 0) / 60);
+            const seconds = (c.remainingSeconds || 0) % 60;
+            const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            return `${c.itemName} ${timeStr}`;
+        }).join('\n');
+        
+        console.log(`Updating sprite for seat ${seatId} with ${uniqueConsumables.length} items:`, content);
+        
+        // Always update but cache the canvas to reduce recreation overhead
+        if (!statusSprite.userData) {
+            statusSprite.userData = {};
+        }
+        
+        // Only recreate canvas if content structure changed (not just timers)
+        const itemSignature = uniqueConsumables.map(c => `${c.itemName}_${c.orderId || c.itemId}`).join('|');
+        const lastSignature = statusSprite.userData.itemSignature;
+        
+        if (lastSignature !== itemSignature) {
+            console.log(`Content structure changed for seat ${seatId}, recreating canvas`);
+            const canvas = this.createUserStatusCanvas(content);
+            statusSprite.material.map = new THREE.CanvasTexture(canvas);
+            statusSprite.material.needsUpdate = true;
+            statusSprite.userData.itemSignature = itemSignature;
+        } else {
+            // Just update the existing canvas with new times
+            const canvas = this.createUserStatusCanvas(content);
+            statusSprite.material.map.image = canvas;
+            statusSprite.material.map.needsUpdate = true;
+        }
+        
+        statusSprite.visible = true;
+    }
+    
+    hideUserStatusSprite(seatId) {
+        const seatIndex = seatId - 1;
+        if (seatIndex >= 0 && seatIndex < this.sprites.userStatusBoxes.length) {
+            this.sprites.userStatusBoxes[seatIndex].visible = false;
+        }
+    }
+    
+    hideMasterStatusSprite() {
+        if (this.sprites.masterStatusLabel) {
+            this.sprites.masterStatusLabel.visible = false;
+        }
+    }
+    
+    clearAllUserStatusSprites() {
+        // Hide all user status sprites (used when user changes seats)
+        for (let i = 0; i < this.sprites.userStatusBoxes.length; i++) {
+            this.sprites.userStatusBoxes[i].visible = false;
+        }
+    }
+    
+    clearUserStatusSpritesForCurrentUser() {
+        // More targeted clearing - only for current user when they change seats
+        if (!window.wsClient?.userId) return;
+        
+        const currentUserId = window.wsClient.userId;
+        
+        // Only hide sprites for the current user by checking which seats they were in
+        if (window.userStatusManager && window.userStatusManager.userStatuses) {
+            window.userStatusManager.userStatuses.forEach((statusData, seatId) => {
+                if (statusData.userId === currentUserId) {
+                    // Only hide sprites for the current user's old seat
+                    this.hideUserStatusSprite(seatId);
+                    console.log(`Cleared status sprite for current user's old seat ${seatId}`);
+                }
+            });
+        }
+        
+        console.log('Cleared user status sprites only for current user seat change');
+    }
+    
+    // Helper method to draw rounded rectangles (browser compatibility)
+    drawRoundedRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+    }
+
+    // Helper method to remove duplicate consumables (frontend safety check)
+    deduplicateConsumables(consumables) {
+        // More lenient deduplication: only remove exact object duplicates
+        const seen = new Map();
+        const result = [];
+        
+        for (const consumable of consumables) {
+            // Use orderId as primary key, fall back to name+startTime for legacy items
+            const primaryKey = consumable.orderId || consumable.itemId;
+            const fallbackKey = `${consumable.itemName}_${consumable.startTime || Date.now()}`;
+            const key = primaryKey || fallbackKey;
+            
+            // Only filter if we've seen the exact same order/item
+            if (!seen.has(key)) {
+                seen.set(key, consumable);
+                result.push(consumable);
+            } else {
+                // Only filter if times are very similar (within 5 seconds)
+                const existing = seen.get(key);
+                const timeDiff = Math.abs((existing.remainingSeconds || 0) - (consumable.remainingSeconds || 0));
+                if (timeDiff > 5) {
+                    // Different enough to be a separate item
+                    result.push(consumable);
+                    console.log(`Allowing similar consumable with time difference: ${consumable.itemName}`);
+                } else {
+                    console.log(`Filtered duplicate consumable: ${consumable.itemName}`);
+                }
+            }
+        }
+        
+        // Sort by remaining time (longest first) for better display
+        result.sort((a, b) => (b.remainingSeconds || 0) - (a.remainingSeconds || 0));
+        
+        // Limit total items to prevent UI overflow
+        const maxItems = 6;
+        if (result.length > maxItems) {
+            console.log(`Limiting consumables from ${result.length} to ${maxItems} items`);
+            return result.slice(0, maxItems);
+        }
+        
+        return result;
     }
 
     getSeatStates() {

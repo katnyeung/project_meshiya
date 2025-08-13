@@ -7,8 +7,11 @@ import com.meshiya.service.RedisService;
 import com.meshiya.service.RoomService;
 import com.meshiya.service.OrderService;
 import com.meshiya.service.UserService;
+import com.meshiya.service.ConsumableService;
+import com.meshiya.service.SeatService;
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
+import com.meshiya.model.Consumable;
 import java.time.ZoneOffset;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -42,6 +45,12 @@ public class DebugController {
     
     @Autowired
     private UserService userService;
+    
+    @Autowired
+    private ConsumableService consumableService;
+    
+    @Autowired
+    private SeatService seatService;
 
     @Operation(summary = "Get all rooms information", description = "Returns debug information about all rooms in the system")
     @GetMapping("/rooms")
@@ -131,7 +140,6 @@ public class DebugController {
             List<ChatMessage> aiContext = redisService.getAIContext();
             Map<String, Object> contextMap = new HashMap<>();
             contextMap.put("messages", aiContext);
-            masterInfo.setCurrentContext(contextMap);
             
             // Get recent responses from chat messages
             List<ChatMessage> messages = redisService.getAllRecentMessages();
@@ -153,10 +161,28 @@ public class DebugController {
             masterInfo.setLastResponseTime(System.currentTimeMillis());
             masterInfo.setLastLlmCallTime(System.currentTimeMillis());
             
-            // Count pending orders
-            int pendingOrders = 0;
-            // This would need to be implemented based on your order system
+            // Get order queue status from OrderService
+            Map<String, Object> queueStatus = orderService.getQueueStatus();
+            int pendingOrders = (Integer) queueStatus.get("queueSize");
             masterInfo.setPendingOrders(pendingOrders);
+            
+            // Add additional order information to context
+            Map<String, Object> orderContext = new HashMap<>();
+            orderContext.put("queueSize", queueStatus.get("queueSize"));
+            orderContext.put("activeOrdersCount", queueStatus.get("activeOrdersCount"));
+            orderContext.put("masterBusy", queueStatus.get("masterBusy"));
+            orderContext.put("currentlyPreparing", queueStatus.get("currentlyPreparing"));
+            orderContext.put("currentlyPreparingOrderId", queueStatus.get("currentlyPreparingOrderId"));
+            
+            // Get room1 specific orders
+            var roomOrders = orderService.getRoomOrders("room1");
+            var pendingRoomOrders = orderService.getRoomPendingOrders("room1");
+            orderContext.put("room1TotalOrders", roomOrders.size());
+            orderContext.put("room1PendingOrders", pendingRoomOrders.size());
+            
+            // Add order context to the main context map
+            contextMap.put("orderSystem", orderContext);
+            masterInfo.setCurrentContext(contextMap);
             
             // Scheduler info
             List<DebugMasterInfo.DebugSchedulerInfo> schedulers = Arrays.asList(
@@ -363,8 +389,23 @@ public class DebugController {
                     String.valueOf(userProfile.getCurrentSeat()) : null;
                 long lastActivity = userProfile.getLastActivity().toInstant(ZoneOffset.UTC).toEpochMilli();
                 
-                // Get user orders (placeholder - implement based on your order system)
+                // Get user orders from OrderService
                 List<DebugUserInfo.DebugOrder> orders = new ArrayList<>();
+                var userOrders = orderService.getUserCurrentOrders(userId);
+                
+                for (var order : userOrders) {
+                    long orderTime = order.getOrderTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
+                    long completionTime = order.getEstimatedReadyTime() != null ? 
+                        order.getEstimatedReadyTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli() : 0;
+                        
+                    orders.add(new DebugUserInfo.DebugOrder(
+                        order.getOrderId(),
+                        order.getMenuItem().getName(),
+                        order.getStatus().toString(),
+                        orderTime,
+                        completionTime
+                    ));
+                }
                 
                 return new DebugUserInfo(userId, userProfile.getUserName(), userProfile.getRoomId(), 
                                        seatId, lastActivity, orders, userProfile.isActive());
@@ -373,12 +414,156 @@ public class DebugController {
                 Integer seatId = redisService.getUserSeat(userId);
                 String userSeatId = seatId != null ? String.valueOf(seatId) : null;
                 
+                // Still get orders even without user profile
+                List<DebugUserInfo.DebugOrder> orders = new ArrayList<>();
+                var userOrders = orderService.getUserCurrentOrders(userId);
+                
+                for (var order : userOrders) {
+                    long orderTime = order.getOrderTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
+                    long completionTime = order.getEstimatedReadyTime() != null ? 
+                        order.getEstimatedReadyTime().toInstant(java.time.ZoneOffset.UTC).toEpochMilli() : 0;
+                        
+                    orders.add(new DebugUserInfo.DebugOrder(
+                        order.getOrderId(),
+                        order.getMenuItem().getName(),
+                        order.getStatus().toString(),
+                        orderTime,
+                        completionTime
+                    ));
+                }
+                
                 return new DebugUserInfo(userId, "Unknown", "room1", userSeatId, 
-                                       System.currentTimeMillis(), new ArrayList<>(), false);
+                                       System.currentTimeMillis(), orders, false);
             }
             
         } catch (Exception e) {
             return new DebugUserInfo(userId, "ERROR", "unknown", null, 0, new ArrayList<>(), false);
+        }
+    }
+    
+    @Operation(summary = "Get user status information", description = "Returns consumable status for a specific user in room/seat")
+    @GetMapping("/user-status")
+    public Map<String, Object> getUserStatus(
+            @Parameter(description = "User ID") @RequestParam String userId,
+            @Parameter(description = "Room ID", example = "room1") @RequestParam(defaultValue = "room1") String roomId,
+            @Parameter(description = "Seat ID") @RequestParam Integer seatId) {
+        
+        try {
+            return consumableService.getUserStatusInfo(userId, roomId, seatId);
+        } catch (Exception e) {
+            logger.error("Error getting user status for {} in room {} seat {}", userId, roomId, seatId, e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Failed to get user status: " + e.getMessage());
+            error.put("userId", userId);
+            error.put("roomId", roomId);
+            error.put("seatId", seatId);
+            return error;
+        }
+    }
+    
+    @Operation(summary = "Get all user statuses", description = "Returns consumable status for all occupied seats")
+    @GetMapping("/all-user-status")
+    public Map<String, Object> getAllUserStatus() {
+        try {
+            Map<Integer, String> seatOccupancy = redisService.getAllSeatOccupancy();
+            Map<String, Object> allStatuses = new HashMap<>();
+            
+            for (Map.Entry<Integer, String> seat : seatOccupancy.entrySet()) {
+                Integer seatId = seat.getKey();
+                String userId = seat.getValue();
+                String roomId = "room1"; // Assume room1 for now
+                
+                Map<String, Object> userStatus = consumableService.getUserStatusInfo(userId, roomId, seatId);
+                allStatuses.put("seat" + seatId, userStatus);
+            }
+            
+            allStatuses.put("totalOccupiedSeats", seatOccupancy.size());
+            allStatuses.put("timestamp", System.currentTimeMillis());
+            
+            return allStatuses;
+        } catch (Exception e) {
+            logger.error("Error getting all user statuses", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Failed to get user statuses: " + e.getMessage());
+            return error;
+        }
+    }
+    
+    @Operation(summary = "Get room/seat/user relationships", description = "Returns centralized room/seat/user mapping with consumables info")
+    @GetMapping("/seat-occupancy")
+    public Map<String, Object> getSeatOccupancyDebug() {
+        try {
+            // Get the centralized mapping
+            Map<String, Object> debug = seatService.getDebugInfo();
+            
+            // Add consumable info for each user
+            SeatService.RoomMapping allRooms = seatService.getAllRooms();
+            for (SeatService.RoomInfo room : allRooms.getRooms().values()) {
+                for (SeatService.UserInfo user : room.getSeats().values()) {
+                    List<Consumable> consumables = consumableService.getConsumables(user.getUserId(), user.getRoomId(), user.getSeatId());
+                    
+                    // Add consumable info to the debug data
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> roomData = (Map<String, Object>) debug.get(user.getRoomId());
+                    if (roomData != null) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> seatsData = (Map<String, Object>) roomData.get("seats");
+                        if (seatsData != null) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> seatData = (Map<String, Object>) seatsData.get("seat" + user.getSeatId());
+                            if (seatData != null) {
+                                seatData.put("consumables", consumables);
+                                seatData.put("consumableCount", consumables.size());
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return debug;
+        } catch (Exception e) {
+            logger.error("Error getting room/seat/user debug info", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Failed to get room/seat/user info: " + e.getMessage());
+            return error;
+        }
+    }
+    
+    @Operation(summary = "Reset room/seat/user mappings", description = "Clears all centralized mappings (for testing)")
+    @PostMapping("/clear-mappings")
+    public Map<String, Object> clearMappings() {
+        try {
+            seatService.clearAll();
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("message", "All room/seat/user mappings cleared");
+            result.put("timestamp", System.currentTimeMillis());
+            return result;
+        } catch (Exception e) {
+            logger.error("Error clearing mappings", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("error", "Failed to clear mappings: " + e.getMessage());
+            return error;
+        }
+    }
+    
+    @Operation(summary = "Clear all consumables", description = "Clears all consumable data from Redis (fixes corruption)")
+    @PostMapping("/clear-consumables")
+    public Map<String, Object> clearConsumables() {
+        try {
+            consumableService.clearAllConsumables();
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("message", "All consumables cleared from Redis");
+            result.put("timestamp", System.currentTimeMillis());
+            return result;
+        } catch (Exception e) {
+            logger.error("Error clearing consumables", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("error", "Failed to clear consumables: " + e.getMessage());
+            return error;
         }
     }
 }

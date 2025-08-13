@@ -1,0 +1,28 @@
+{
+  "name": "meshiya",
+  "version": "1.0.0",
+  "description": "AI Midnight Diner - A 2.5D chatroom inspired by Shin'ya Shokudō",
+  "main": "frontend/index.html",
+  "scripts": {
+    "dev:frontend": "python -m http.server 3000 --directory frontend",
+    "dev:backend": "cd backend && mvn spring-boot:run",
+    "build:backend": "cd backend && mvn clean package",
+    "test:backend": "cd backend && mvn test",
+    "start": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "setup": "echo 'Setting up Meshiya...' && cd backend && mvn dependency:resolve"
+  },
+  "keywords": ["ai", "chatroom", "three.js", "spring-boot", "websocket", "midnight-diner"],
+  "author": "Meshiya Project",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=14.0.0",
+    "java": ">=17"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/meshiya.git"
+  }
+}

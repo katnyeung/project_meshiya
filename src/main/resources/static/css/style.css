@@ -147,6 +147,33 @@ body {
     color: #ffd700;
 }
 
+.message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2px;
+}
+
+.message-timestamp {
+    font-size: 0.75em;
+    color: #888;
+    font-weight: normal;
+}
+
+.message-content {
+    padding-left: 2px;
+}
+
+.message.system {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.system-content {
+    flex: 1;
+}
+
 #chat-input-container {
     display: flex;
     gap: 10px;
@@ -253,6 +280,84 @@ body {
     color: #ff6b6b;
 }
 
+/* Master Status Label - Now handled by Three.js sprite */
+
+#master-status-text {
+    color: #ffd700;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+    text-transform: capitalize;
+}
+
+/* Status-specific colors */
+#master-status-label.status-idle {
+    border-color: #90ee90;
+}
+
+#master-status-label.status-idle #master-status-text {
+    color: #90ee90;
+}
+
+#master-status-label.status-thinking {
+    border-color: #87ceeb;
+    animation: thinking-pulse 2s infinite;
+}
+
+#master-status-label.status-thinking #master-status-text {
+    color: #87ceeb;
+}
+
+#master-status-label.status-preparing_order,
+#master-status-label.status-busy {
+    border-color: #ffa500;
+}
+
+#master-status-label.status-preparing_order #master-status-text,
+#master-status-label.status-busy #master-status-text {
+    color: #ffa500;
+}
+
+#master-status-label.status-serving {
+    border-color: #ff69b4;
+    animation: serving-glow 1.5s infinite;
+}
+
+#master-status-label.status-serving #master-status-text {
+    color: #ff69b4;
+}
+
+#master-status-label.status-cleaning {
+    border-color: #dda0dd;
+}
+
+#master-status-label.status-cleaning #master-status-text {
+    color: #dda0dd;
+}
+
+#master-status-label.status-conversing {
+    border-color: #20b2aa;
+    animation: conversation-pulse 3s infinite;
+}
+
+#master-status-label.status-conversing #master-status-text {
+    color: #20b2aa;
+}
+
+@keyframes thinking-pulse {
+    0%, 100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
+    50% { opacity: 1; transform: translateX(-50%) scale(1.05); }
+}
+
+@keyframes serving-glow {
+    0%, 100% { box-shadow: 0 4px 20px rgba(255, 105, 180, 0.3); }
+    50% { box-shadow: 0 4px 30px rgba(255, 105, 180, 0.6); }
+}
+
+@keyframes conversation-pulse {
+    0%, 100% { opacity: 0.8; }
+    33% { opacity: 1; }
+    66% { opacity: 0.9; }
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 8px;
@@ -292,4 +397,151 @@ body {
         padding: 8px;
         font-size: 12px;
     }
+}
+
+/* User Status Box Styles - Now handled by Three.js sprites */
+
+.status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #555;
+}
+
+.user-name {
+    font-weight: bold;
+    font-size: 13px;
+    color: #ffd700;
+}
+
+.seat-indicator {
+    font-size: 11px;
+    color: #aaa;
+    opacity: 0.8;
+}
+
+.consumables-list {
+    /* Simplified - no scrolling needed */
+}
+
+.consumable-item-simple {
+    margin: 0;
+    padding: 0;
+}
+
+.item-text {
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.consumable-item {
+    margin-bottom: 8px;
+    padding: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    border-left: 3px solid #4CAF50;
+}
+
+.consumable-item:last-child {
+    margin-bottom: 0;
+}
+
+.consumable-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+
+.item-name {
+    font-size: 12px;
+    font-weight: bold;
+    color: #fff;
+}
+
+.item-type {
+    font-size: 10px;
+    color: #aaa;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+}
+
+.consumable-timer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4CAF50 0%, #8BC34A 50%, #CDDC39 100%);
+    transition: width 0.3s ease;
+    border-radius: 2px;
+}
+
+.time-remaining {
+    font-size: 10px;
+    color: #ccc;
+    min-width: 35px;
+    text-align: right;
+}
+
+.no-consumables {
+    text-align: center;
+    color: #888;
+    font-size: 11px;
+    padding: 10px;
+    font-style: italic;
+}
+
+/* Different colors for different consumable types */
+.consumable-item[data-type="DRINK"] {
+    border-left-color: #2196F3;
+}
+
+.consumable-item[data-type="FOOD"] {
+    border-left-color: #FF9800;
+}
+
+.consumable-item[data-type="DESSERT"] {
+    border-left-color: #E91E63;
+}
+
+/* Animation for new consumables */
+.consumable-item.new-item {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Low time warning */
+.consumable-item.low-time .progress-fill {
+    background: linear-gradient(90deg, #FF5722 0%, #FF9800 100%);
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
 }

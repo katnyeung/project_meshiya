@@ -29,6 +29,9 @@ public class RoomService {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
     
+    @Autowired
+    private ConsumableService consumableService;
+    
     private final ObjectMapper objectMapper;
     
     public RoomService() {
@@ -164,7 +167,17 @@ public class RoomService {
         // Remove user from previous seat if they had one
         Integer previousSeat = room.getUserSeat(userId);
         if (previousSeat != null) {
+            logger.info("User {} moving from seat {} to seat {} in room {}", userId, previousSeat, seatId, roomId);
             room.freeSeat(previousSeat);
+            
+            // Transfer consumables to new seat (since consumables now follow user)
+            consumableService.transferConsumablesOnSeatChange(userId, roomId, previousSeat, seatId);
+        } else {
+            // User joining for first time or rejoining after disconnect
+            logger.info("User {} joining seat {} in room {} (new or reconnecting)", userId, seatId, roomId);
+            
+            // Restore user's consumables when they rejoin
+            consumableService.restoreUserConsumables(userId, roomId, seatId);
         }
         
         room.occupySeat(seatId, userId);
@@ -172,7 +185,7 @@ public class RoomService {
         
         // Broadcast seat update
         broadcastSeatUpdate(roomId, room.getSeatOccupancy());
-        logger.info("User {} joined seat {} in room {}", userId, seatId, roomId);
+        logger.info("User {} joined seat {} in room {} (consumables restored)", userId, seatId, roomId);
         return true;
     }
     
@@ -189,6 +202,9 @@ public class RoomService {
         if (seatId == null) {
             return false;
         }
+        
+        // Clear user's consumables when leaving seat
+        consumableService.clearUserConsumables(userId, roomId, seatId);
         
         room.freeSeat(seatId);
         saveRoom(room);

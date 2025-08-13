@@ -8,6 +8,8 @@ class WebSocketClient {
         this.messageHandlers = [];
         this.seatHandlers = [];
         this.connectionHandlers = [];
+        this.masterStatusHandlers = [];
+        this.userStatusHandlers = [];
     }
 
     connect(username) {
@@ -76,12 +78,29 @@ class WebSocketClient {
             this.handleSeatUpdate(JSON.parse(messageOutput.body));
         });
         
+        // Subscribe to master status updates
+        this.stompClient.subscribe('/topic/master-status', (messageOutput) => {
+            console.log('Received master status update:', messageOutput.body);
+            this.handleMasterStatusUpdate(JSON.parse(messageOutput.body));
+        });
+        
+        // Subscribe to user status updates
+        this.stompClient.subscribe('/topic/room/room1/user-status', (messageOutput) => {
+            console.log('Received user status update:', messageOutput.body);
+            this.handleUserStatusUpdate(JSON.parse(messageOutput.body));
+        });
+        
         // Join Room1
         this.stompClient.send("/app/room.join", {}, JSON.stringify({
             userId: this.userId,
             userName: this.username,
             roomId: 'room1'
         }));
+        
+        // Request current user status data after connection
+        setTimeout(() => {
+            this.requestUserStatusRefresh();
+        }, 500);
     }
 
     onError(error) {
@@ -183,6 +202,16 @@ class WebSocketClient {
         }
     }
 
+    handleMasterStatusUpdate(message) {
+        console.log('Handling master status update:', message);
+        this.notifyMasterStatusHandlers(message);
+    }
+
+    handleUserStatusUpdate(message) {
+        console.log('Handling user status update:', message);
+        this.notifyUserStatusHandlers(message);
+    }
+
     // Event handler management
     onMessage(handler) {
         this.messageHandlers.push(handler);
@@ -196,6 +225,14 @@ class WebSocketClient {
         this.connectionHandlers.push(handler);
     }
 
+    onMasterStatusUpdate(handler) {
+        this.masterStatusHandlers.push(handler);
+    }
+
+    onUserStatusUpdate(handler) {
+        this.userStatusHandlers.push(handler);
+    }
+
     notifyMessageHandlers(message) {
         this.messageHandlers.forEach(handler => handler(message));
     }
@@ -206,6 +243,14 @@ class WebSocketClient {
 
     notifyConnectionHandlers(status) {
         this.connectionHandlers.forEach(handler => handler(status));
+    }
+
+    notifyMasterStatusHandlers(message) {
+        this.masterStatusHandlers.forEach(handler => handler(message));
+    }
+
+    notifyUserStatusHandlers(message) {
+        this.userStatusHandlers.forEach(handler => handler(message));
     }
 
     /**
@@ -249,6 +294,29 @@ class WebSocketClient {
 
     generateUserId() {
         return 'user_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    /**
+     * Request a refresh of user status data from the server
+     */
+    requestUserStatusRefresh() {
+        if (!this.isConnected()) {
+            console.warn('Cannot request user status refresh - not connected');
+            return;
+        }
+        
+        console.log('🔄 Requesting user status refresh for all users');
+        
+        try {
+            this.stompClient.send("/app/user-status.refresh", {}, JSON.stringify({
+                roomId: 'room1',
+                userId: this.userId,
+                userName: this.username,
+                type: 'USER_STATUS_REFRESH'
+            }));
+        } catch (error) {
+            console.error('Failed to request user status refresh:', error);
+        }
     }
 
     disconnect() {

@@ -1,9 +1,11 @@
 package com.meshiya.service;
 
+import com.meshiya.config.MenuConfiguration;
 import com.meshiya.model.MenuItem;
 import com.meshiya.model.MenuItemType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
@@ -15,37 +17,30 @@ public class MenuService {
     
     private static final Logger logger = LoggerFactory.getLogger(MenuService.class);
     
+    @Autowired
+    private MenuConfiguration.MenuConfig menuConfig;
+    
     private final Map<String, MenuItem> menuItems = new HashMap<>();
     
     @PostConstruct
     public void initializeMenu() {
-        // Initialize basic midnight diner menu
-        addMenuItem(new MenuItem("tea_green", "Green Tea", "Warm and soothing green tea", 
-                                MenuItemType.DRINK, 30, "contemplative", "all"));
-        addMenuItem(new MenuItem("tea_oolong", "Oolong Tea", "Rich oolong tea for quiet moments", 
-                                MenuItemType.DRINK, 30, "nostalgic", "all"));
-        addMenuItem(new MenuItem("sake_warm", "Warm Sake", "Traditional warm sake", 
-                                MenuItemType.DRINK, 45, "reflective", "winter"));
-        addMenuItem(new MenuItem("beer", "Beer", "Cold beer for the evening", 
-                                MenuItemType.DRINK, 15, "casual", "summer"));
+        // Load menu items from JSON configuration
+        for (MenuConfiguration.MenuItemData itemData : menuConfig.getAllItems()) {
+            MenuItemType type = MenuItemType.valueOf(itemData.getType());
+            MenuItem menuItem = new MenuItem(
+                itemData.getId(),
+                itemData.getName(),
+                itemData.getDescription(),
+                type,
+                itemData.getPreparationTimeSeconds(),
+                itemData.getConsumptionTimeSeconds(),
+                itemData.getMood(),
+                itemData.getSeason()
+            );
+            addMenuItem(menuItem);
+        }
         
-        addMenuItem(new MenuItem("ramen_miso", "Miso Ramen", "Hearty miso ramen with soft-boiled egg", 
-                                MenuItemType.FOOD, 180, "comforting", "winter"));
-        addMenuItem(new MenuItem("tamagoyaki", "Tamagoyaki", "Sweet Japanese rolled omelet", 
-                                MenuItemType.FOOD, 120, "nostalgic", "all"));
-        addMenuItem(new MenuItem("onigiri", "Onigiri", "Rice ball with umeboshi", 
-                                MenuItemType.FOOD, 60, "simple", "all"));
-        addMenuItem(new MenuItem("yakitori", "Yakitori", "Grilled chicken skewers", 
-                                MenuItemType.FOOD, 150, "social", "all"));
-        addMenuItem(new MenuItem("gyoza", "Gyoza", "Pan-fried dumplings", 
-                                MenuItemType.FOOD, 120, "comforting", "all"));
-        
-        addMenuItem(new MenuItem("mochi_ice", "Mochi Ice Cream", "Sweet mochi with ice cream", 
-                                MenuItemType.DESSERT, 30, "sweet", "summer"));
-        addMenuItem(new MenuItem("dorayaki", "Dorayaki", "Pancake sandwich with sweet filling", 
-                                MenuItemType.DESSERT, 60, "childhood", "all"));
-        
-        logger.info("Initialized menu with {} items", menuItems.size());
+        logger.info("Initialized menu with {} items loaded from JSON configuration", menuItems.size());
     }
     
     private void addMenuItem(MenuItem item) {
