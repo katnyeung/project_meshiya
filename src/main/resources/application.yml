@@ -27,7 +27,6 @@ llm:
     provider: perplexity  # Options: perplexity, openai, ollama
     api:
       url: https://api.perplexity.ai/chat/completions
-      key: ${PERPLEXITY_API_KEY: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}  # Set your API key here or in environment
     model: sonar  # Provider-specific model name
     timeout: 30000
   
@@ -36,7 +35,6 @@ llm:
     provider: perplexity  # Options: perplexity, openai, ollama
     api:
       url: https://api.perplexity.ai/chat/completions
-      key: ${PERPLEXITY_API_KEY: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}  # Set your API key here or in environment
     model: sonar  # Provider-specific model name
     timeout: 15000
 
