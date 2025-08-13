@@ -20,9 +20,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 @Service
-public class UserStatusService {
+public class ConsumableService {
     
-    private static final Logger logger = LoggerFactory.getLogger(UserStatusService.class);
+    private static final Logger logger = LoggerFactory.getLogger(ConsumableService.class);
     
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -34,7 +34,7 @@ public class UserStatusService {
     private RedisService redisService;
     
     @Autowired
-    private RoomSeatUserManager roomSeatUserManager;
+    private SeatService seatService;
     
     private final ObjectMapper objectMapper;
     
@@ -44,7 +44,7 @@ public class UserStatusService {
     
     // Note: Consumption durations are now defined per menu item in the JSON configuration
     
-    public UserStatusService() {
+    public ConsumableService() {
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
     }
@@ -61,7 +61,7 @@ public class UserStatusService {
         }
         
         // Verify user is actually in the seat using centralized manager
-        RoomSeatUserManager.UserInfo userInSeat = roomSeatUserManager.getUserInSeat(roomId, seatId);
+        SeatService.UserInfo userInSeat = seatService.getUserInSeat(roomId, seatId);
         if (userInSeat == null || !userId.equals(userInSeat.getUserId())) {
             logger.warn("User {} not found in seat {} of room {}, cannot add consumable for {}", 
                        userId, seatId, roomId, menuItem.getName());
@@ -186,11 +186,11 @@ public class UserStatusService {
      */
     private Integer getUserCurrentSeat(String userId, String roomId) {
         // Try to get from centralized manager first
-        RoomSeatUserManager.RoomMapping allRooms = roomSeatUserManager.getAllRooms();
-        RoomSeatUserManager.RoomInfo room = allRooms.getRooms().get(roomId);
+        SeatService.RoomMapping allRooms = seatService.getAllRooms();
+        SeatService.RoomInfo room = allRooms.getRooms().get(roomId);
         
         if (room != null) {
-            for (RoomSeatUserManager.UserInfo user : room.getSeats().values()) {
+            for (SeatService.UserInfo user : room.getSeats().values()) {
                 if (userId.equals(user.getUserId())) {
                     return user.getSeatId();
                 }
@@ -425,8 +425,8 @@ public class UserStatusService {
         
         try {
             // Get all users in the room using centralized manager
-            RoomSeatUserManager.RoomMapping allRooms = roomSeatUserManager.getAllRooms();
-            RoomSeatUserManager.RoomInfo room = allRooms.getRooms().get(roomId);
+            SeatService.RoomMapping allRooms = seatService.getAllRooms();
+            SeatService.RoomInfo room = allRooms.getRooms().get(roomId);
             
             if (room == null) {
                 logger.warn("Room {} not found for status refresh", roomId);
@@ -434,7 +434,7 @@ public class UserStatusService {
             }
             
             int statusCount = 0;
-            for (RoomSeatUserManager.UserInfo user : room.getSeats().values()) {
+            for (SeatService.UserInfo user : room.getSeats().values()) {
                 broadcastUserStatusUpdate(user.getUserId(), user.getRoomId(), user.getSeatId());
                 statusCount++;
             }
@@ -452,10 +452,10 @@ public class UserStatusService {
     public void clearAllConsumables() {
         try {
             // Get all users in all rooms
-            RoomSeatUserManager.RoomMapping allRooms = roomSeatUserManager.getAllRooms();
+            SeatService.RoomMapping allRooms = seatService.getAllRooms();
             
-            for (RoomSeatUserManager.RoomInfo room : allRooms.getRooms().values()) {
-                for (RoomSeatUserManager.UserInfo user : room.getSeats().values()) {
+            for (SeatService.RoomInfo room : allRooms.getRooms().values()) {
+                for (SeatService.UserInfo user : room.getSeats().values()) {
                     String key = String.format(CONSUMABLES_KEY_PATTERN, user.getRoomId(), user.getSeatId(), user.getUserId());
                     redisTemplate.delete(key);
                 }

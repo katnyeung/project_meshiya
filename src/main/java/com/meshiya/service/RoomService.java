@@ -30,7 +30,7 @@ public class RoomService {
     private SimpMessagingTemplate messagingTemplate;
     
     @Autowired
-    private UserStatusService userStatusService;
+    private ConsumableService consumableService;
     
     private final ObjectMapper objectMapper;
     
@@ -171,13 +171,13 @@ public class RoomService {
             room.freeSeat(previousSeat);
             
             // Transfer consumables to new seat (since consumables now follow user)
-            userStatusService.transferConsumablesOnSeatChange(userId, roomId, previousSeat, seatId);
+            consumableService.transferConsumablesOnSeatChange(userId, roomId, previousSeat, seatId);
         } else {
             // User joining for first time or rejoining after disconnect
             logger.info("User {} joining seat {} in room {} (new or reconnecting)", userId, seatId, roomId);
             
             // Restore user's consumables when they rejoin
-            userStatusService.restoreUserConsumables(userId, roomId, seatId);
+            consumableService.restoreUserConsumables(userId, roomId, seatId);
         }
         
         room.occupySeat(seatId, userId);
@@ -204,7 +204,7 @@ public class RoomService {
         }
         
         // Clear user's consumables when leaving seat
-        userStatusService.clearUserConsumables(userId, roomId, seatId);
+        consumableService.clearUserConsumables(userId, roomId, seatId);
         
         room.freeSeat(seatId);
         saveRoom(room);

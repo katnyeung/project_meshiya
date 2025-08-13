@@ -2,6 +2,7 @@ package com.meshiya.service;
 
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.*;
+import com.meshiya.config.MasterConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,10 +35,16 @@ public class OrderService {
     private RoomService roomService;
     
     @Autowired
-    private UserStatusService userStatusService;
+    private ConsumableService consumableService;
     
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+    
+    @Autowired
+    private OrderLLMService orderLLMService;
+    
+    @Autowired
+    private MasterConfiguration.MasterConfig masterConfig;
     
     // Order queue management
     private final Queue<Order> orderQueue = new ConcurrentLinkedQueue<>();
@@ -110,6 +117,250 @@ public class OrderService {
     }
     
     /**
+     * Places an LLM-generated order that creates a custom consumable
+     */
+    public synchronized boolean placeLlmOrder(String userId, String userName, String roomId, String orderRequest, Integer seatId) {
+        try {
+            logger.info("Processing LLM order: '{}' for user {}", orderRequest, userName);
+            
+            // Build menu context for LLM
+            List<MenuItem> allItems = menuService.getAllMenuItems();
+            StringBuilder menuContext = new StringBuilder();
+            menuContext.append("Available menu categories and examples:\n\n");
+            
+            // Group by category
+            Map<String, List<MenuItem>> itemsByCategory = new HashMap<>();
+            for (MenuItem item : allItems) {
+                String category = item.getType().name().toLowerCase();
+                itemsByCategory.computeIfAbsent(category, k -> new ArrayList<>()).add(item);
+            }
+            
+            for (Map.Entry<String, List<MenuItem>> entry : itemsByCategory.entrySet()) {
+                menuContext.append(entry.getKey().toUpperCase()).append(":\n");
+                for (MenuItem item : entry.getValue()) {
+                    menuContext.append("- ").append(item.getName()).append(": ").append(item.getDescription())
+                              .append(" (prep: ").append(item.getPreparationTimeSeconds()).append("s, ")
+                              .append("consume: ").append(item.getConsumptionTimeSeconds()).append("s)\n");
+                }
+                menuContext.append("\n");
+            }
+            
+            // Create LLM prompt for creative consumable generation using configuration
+            String systemPrompt = getOrderSystemPrompt();
+            String userPrompt = buildOrderUserPrompt(menuContext.toString(), orderRequest);
+            
+            logger.debug("LLM consumable generation prompt: {}", userPrompt);
+            
+            String llmResponse = orderLLMService.callLlm(systemPrompt, userPrompt);
+            
+            if (llmResponse != null && !llmResponse.trim().isEmpty()) {
+                logger.info("LLM response: {}", llmResponse);
+                
+                // Parse LLM response as simple text format
+                MenuItem customItem = parseSimpleTextResponse(llmResponse.trim(), orderRequest);
+                
+                if (customItem != null) {
+                    String orderId = generateOrderId();
+                    Order order = new Order(orderId, userId, userName, roomId, customItem, seatId);
+                    
+                    orderQueue.offer(order);
+                    activeOrders.put(orderId, order);
+                    userCurrentOrders.computeIfAbsent(userId, k -> new HashSet<>()).add(orderId);
+                    
+                    // Persist user orders to Redis
+                    persistUserOrders(userId);
+                    
+                    notifyStatusChange(order, OrderStatus.ORDERED);
+                    
+                    logger.info("LLM order placed: {} ordered custom {} in room {}", userName, customItem.getName(), roomId);
+                    return true;
+                } else {
+                    logger.warn("Failed to parse LLM response for consumable generation");
+                    return false;
+                }
+            } else {
+                logger.warn("LLM returned empty response for consumable generation");
+                return false;
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error placing LLM order", e);
+            return false;
+        }
+    }
+    
+    /**
+     * Parses XML-tagged response to create a custom MenuItem
+     * Expected format: <foodname>...</foodname><description>...</description><type>...</type><preptime>...</preptime><consumetime>...</consumetime>
+     */
+    private MenuItem parseSimpleTextResponse(String llmResponse, String originalRequest) {
+        try {
+            logger.debug("Parsing LLM response with regex: {}", llmResponse);
+            
+            // Use regex to extract values from XML-like tags
+            String name = extractTagValue(llmResponse, "foodname");
+            String description = extractTagValue(llmResponse, "description");
+            String typeStr = extractTagValue(llmResponse, "type");
+            String prepTimeStr = extractTagValue(llmResponse, "preptime");
+            String consumeTimeStr = extractTagValue(llmResponse, "consumetime");
+            
+            logger.debug("Extracted values - name: {}, description: {}, type: {}, prep: {}, consume: {}", 
+                        name, description, typeStr, prepTimeStr, consumeTimeStr);
+            
+            if (name == null || description == null || typeStr == null) {
+                logger.warn("LLM response missing required fields. Creating fallback item. name={}, desc={}, type={}", 
+                           name, description, typeStr);
+                return createFallbackItem(originalRequest);
+            }
+            
+            // Parse type - be flexible with LLM responses
+            MenuItemType type = parseFlexibleType(typeStr);
+            
+            // Parse times with smart defaults based on type
+            int prepTime = getDefaultPrepTime(type);
+            int consumeTime = getDefaultConsumeTime(type);
+            
+            try {
+                if (prepTimeStr != null && !prepTimeStr.isEmpty()) {
+                    prepTime = Integer.parseInt(prepTimeStr.trim());
+                }
+                if (consumeTimeStr != null && !consumeTimeStr.isEmpty()) {
+                    consumeTime = Integer.parseInt(consumeTimeStr.trim());
+                }
+            } catch (NumberFormatException e) {
+                logger.warn("Invalid time values from LLM, using defaults: prep={}, consume={}", prepTime, consumeTime);
+            }
+            
+            // Create custom MenuItem with generated ID
+            String customId = "custom_" + System.currentTimeMillis();
+            MenuItem customItem = new MenuItem(customId, name, description, type, prepTime, consumeTime, 
+                                             "creative", "all");
+            
+            logger.info("Created custom item: {} ({}) - prep:{}s, consume:{}s", name, type, prepTime, consumeTime);
+            return customItem;
+            
+        } catch (Exception e) {
+            logger.error("Error parsing XML response: {}", llmResponse, e);
+            return createFallbackItem(originalRequest);
+        }
+    }
+    
+    /**
+     * Extracts content from XML-like tags using regex
+     */
+    private String extractTagValue(String text, String tagName) {
+        try {
+            // Create regex pattern like <foodname>(.*?)</foodname>
+            String pattern = "<" + tagName + ">(.*?)</" + tagName + ">";
+            java.util.regex.Pattern regexPattern = java.util.regex.Pattern.compile(pattern, java.util.regex.Pattern.DOTALL);
+            java.util.regex.Matcher matcher = regexPattern.matcher(text);
+            
+            if (matcher.find()) {
+                String value = matcher.group(1).trim();
+                logger.debug("Extracted {} = '{}'", tagName, value);
+                return value;
+            } else {
+                logger.debug("Tag {} not found in response", tagName);
+                return null;
+            }
+        } catch (Exception e) {
+            logger.warn("Error extracting tag {}: {}", tagName, e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Parse type flexibly - handles multiple formats from LLM
+     */
+    private MenuItemType parseFlexibleType(String typeStr) {
+        if (typeStr == null || typeStr.trim().isEmpty()) {
+            logger.warn("Empty type from LLM, defaulting to FOOD");
+            return MenuItemType.FOOD;
+        }
+        
+        String cleanType = typeStr.toUpperCase().trim();
+        logger.debug("Parsing flexible type: '{}'", cleanType);
+        
+        // Check for exact matches first
+        try {
+            return MenuItemType.valueOf(cleanType);
+        } catch (IllegalArgumentException e) {
+            // Handle multiple types separated by | or other characters
+            logger.debug("Not exact match, checking for partial matches in: {}", cleanType);
+        }
+        
+        // Look for valid types within the string (handles cases like "DESSERT|FOOD|RAMEN")
+        if (cleanType.contains("FOOD")) {
+            logger.debug("Found FOOD in type string");
+            return MenuItemType.FOOD;
+        } else if (cleanType.contains("DRINK")) {
+            logger.debug("Found DRINK in type string");
+            return MenuItemType.DRINK;
+        } else if (cleanType.contains("DESSERT")) {
+            logger.debug("Found DESSERT in type string");
+            return MenuItemType.DESSERT;
+        }
+        
+        // Ultimate fallback
+        logger.warn("Could not parse item type '{}', defaulting to FOOD", typeStr);
+        return MenuItemType.FOOD;
+    }
+
+    /**
+     * Get default preparation time based on item type
+     */
+    private int getDefaultPrepTime(MenuItemType type) {
+        return switch (type) {
+            case DRINK -> 30; // 30 seconds for drinks
+            case FOOD -> 120; // 2 minutes for food  
+            case DESSERT -> 60; // 1 minute for desserts
+        };
+    }
+    
+    /**
+     * Get default consumption time based on item type
+     */
+    private int getDefaultConsumeTime(MenuItemType type) {
+        return switch (type) {
+            case DRINK -> 300; // 5 minutes for drinks
+            case FOOD -> 600; // 10 minutes for food
+            case DESSERT -> 240; // 4 minutes for desserts
+        };
+    }
+    
+    /**
+     * Creates a fallback item when LLM parsing fails
+     */
+    private MenuItem createFallbackItem(String orderRequest) {
+        // Guess the type based on common keywords
+        MenuItemType type = MenuItemType.FOOD; // Default
+        String name = "Special " + orderRequest;
+        String description = "A special creation inspired by your request";
+        
+        String lowerRequest = orderRequest.toLowerCase();
+        if (lowerRequest.contains("tea") || lowerRequest.contains("coffee") || 
+            lowerRequest.contains("drink") || lowerRequest.contains("juice") ||
+            lowerRequest.contains("water") || lowerRequest.contains("sake") || 
+            lowerRequest.contains("beer")) {
+            type = MenuItemType.DRINK;
+            name = "Special " + orderRequest + " Drink";
+        } else if (lowerRequest.contains("cake") || lowerRequest.contains("sweet") ||
+                  lowerRequest.contains("dessert") || lowerRequest.contains("ice cream") ||
+                  lowerRequest.contains("cookie") || lowerRequest.contains("chocolate")) {
+            type = MenuItemType.DESSERT;
+            name = "Sweet " + orderRequest + " Treat";
+        }
+        
+        String customId = "fallback_" + System.currentTimeMillis();
+        MenuItem fallbackItem = new MenuItem(customId, name, description, type, 
+                                           getDefaultPrepTime(type), getDefaultConsumeTime(type),
+                                           "creative", "all");
+        
+        logger.info("Created fallback item: {} ({})", name, type);
+        return fallbackItem;
+    }
+    
+    /**
      * Gets user's current order (most recent if multiple)
      */
     public Optional<Order> getUserCurrentOrder(String userId) {
@@ -174,8 +425,21 @@ public class OrderService {
         logger.info("Master started preparing: {} for {}", 
                    order.getMenuItem().getName(), order.getUserName());
         
-        // Send preparation message to chat
-        String preparingMessage = String.format("*begins preparing %s*", order.getMenuItem().getName());
+        // Send preparation message to chat with description if available
+        String preparingMessage;
+        MenuItem item = order.getMenuItem();
+        
+        // Check if this is a custom LLM-generated item with a creative description
+        if (item.getId().startsWith("custom_") && item.getDescription() != null && 
+            !item.getDescription().equals("A special creation inspired by your request")) {
+            // Use the LLM description for custom items
+            preparingMessage = String.format("\"%s\" *begins preparing %s*", 
+                                           item.getDescription(), item.getName());
+        } else {
+            // Standard message for regular menu items
+            preparingMessage = String.format("*begins preparing %s*", item.getName());
+        }
+        
         sendMasterChatMessage(preparingMessage);
         
         // Update visual state (placeholder for now)
@@ -228,7 +492,7 @@ public class OrderService {
         messagingTemplate.convertAndSendToUser(order.getUserId(), "/queue/orders", servedMessage);
         
         // Add consumable to user status
-        userStatusService.addConsumable(order.getUserId(), order.getRoomId(), order.getSeatId(), order.getMenuItem());
+        consumableService.addConsumable(order.getUserId(), order.getRoomId(), order.getSeatId(), order.getMenuItem());
         
         // Update persisted orders
         persistUserOrders(order.getUserId());
@@ -282,6 +546,48 @@ public class OrderService {
         }, delaySeconds * 1000);
     }
     
+    /**
+     * Get order system prompt from configuration
+     */
+    private String getOrderSystemPrompt() {
+        if (masterConfig != null && masterConfig.getOrderPrompts() != null 
+            && masterConfig.getOrderPrompts().getSystemPrompt() != null) {
+            return masterConfig.getOrderPrompts().getSystemPrompt();
+        }
+        
+        // Fallback default
+        return "You are the Master of a midnight diner. You can create anything the customer wants! " +
+               "Be creative and loose - turn any request into FOOD, DRINK, or DESSERT. " +
+               "There are no wrong answers - just make something that fits one of the three categories.";
+    }
+    
+    /**
+     * Build order user prompt from template
+     */
+    private String buildOrderUserPrompt(String menuContext, String orderRequest) {
+        if (masterConfig != null && masterConfig.getOrderPrompts() != null 
+            && masterConfig.getOrderPrompts().getUserPromptTemplate() != null) {
+            return masterConfig.getOrderPrompts().getUserPromptTemplate()
+                    .replace("{menuContext}", menuContext)
+                    .replace("{orderRequest}", orderRequest);
+        }
+        
+        // Fallback default
+        return menuContext + 
+            "\nCustomer order: \"" + orderRequest + "\"\n\n" +
+            "Create something for this order. It must be FOOD, DRINK, or DESSERT.\n" +
+            "Include your response in these XML tags:\n" +
+            "<foodname>Creative Name</foodname>\n" +
+            "<description>Brief description</description>\n" +
+            "<type>FOOD|DRINK|DESSERT</type>\n" +
+            "<preptime>120</preptime>\n" +
+            "<consumetime>600</consumetime>\n\n" +
+            "Examples:\n" +
+            "- 'tea' → <foodname>Warm Green Tea</foodname><type>DRINK</type>\n" +
+            "- 'spicy food' → <foodname>Spicy Ramen</foodname><type>FOOD</type>\n" +
+            "- 'sweet' → <foodname>Sweet Treat</foodname><type>DESSERT</type>";
+    }
+
     /**
      * Cleans up completed order
      */
@@ -505,7 +811,7 @@ public class OrderService {
                     objectMapper.getTypeFactory().constructCollectionType(List.class, Order.class));
                 
                 // Clear any existing consumables first to prevent duplication
-                userStatusService.clearUserConsumablesForRestore(userId, roomId, seatId);
+                consumableService.clearUserConsumablesForRestore(userId, roomId, seatId);
                 
                 for (Order order : orders) {
                     // Only restore orders that are still relevant (SERVED status) and not expired
@@ -533,7 +839,7 @@ public class OrderService {
                         // IMPORTANT: Recreate consumables for visual display with current seat info
                         // This is what creates the status boxes that show "Green Tea 3:00", etc.
                         // Use current seat info instead of old order seat info (for seat swapping)
-                        userStatusService.addConsumable(order.getUserId(), roomId, seatId, order.getMenuItem());
+                        consumableService.addConsumable(order.getUserId(), roomId, seatId, order.getMenuItem());
                         
                         logger.debug("Restored order {} with consumable for user {}", order.getOrderId(), userId);
                     }

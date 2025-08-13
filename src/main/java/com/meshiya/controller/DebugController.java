@@ -7,8 +7,8 @@ import com.meshiya.service.RedisService;
 import com.meshiya.service.RoomService;
 import com.meshiya.service.OrderService;
 import com.meshiya.service.UserService;
-import com.meshiya.service.UserStatusService;
-import com.meshiya.service.RoomSeatUserManager;
+import com.meshiya.service.ConsumableService;
+import com.meshiya.service.SeatService;
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
 import com.meshiya.model.Consumable;
@@ -47,10 +47,10 @@ public class DebugController {
     private UserService userService;
     
     @Autowired
-    private UserStatusService userStatusService;
+    private ConsumableService consumableService;
     
     @Autowired
-    private RoomSeatUserManager roomSeatUserManager;
+    private SeatService seatService;
 
     @Operation(summary = "Get all rooms information", description = "Returns debug information about all rooms in the system")
     @GetMapping("/rooms")
@@ -449,7 +449,7 @@ public class DebugController {
             @Parameter(description = "Seat ID") @RequestParam Integer seatId) {
         
         try {
-            return userStatusService.getUserStatusInfo(userId, roomId, seatId);
+            return consumableService.getUserStatusInfo(userId, roomId, seatId);
         } catch (Exception e) {
             logger.error("Error getting user status for {} in room {} seat {}", userId, roomId, seatId, e);
             Map<String, Object> error = new HashMap<>();
@@ -473,7 +473,7 @@ public class DebugController {
                 String userId = seat.getValue();
                 String roomId = "room1"; // Assume room1 for now
                 
-                Map<String, Object> userStatus = userStatusService.getUserStatusInfo(userId, roomId, seatId);
+                Map<String, Object> userStatus = consumableService.getUserStatusInfo(userId, roomId, seatId);
                 allStatuses.put("seat" + seatId, userStatus);
             }
             
@@ -494,13 +494,13 @@ public class DebugController {
     public Map<String, Object> getSeatOccupancyDebug() {
         try {
             // Get the centralized mapping
-            Map<String, Object> debug = roomSeatUserManager.getDebugInfo();
+            Map<String, Object> debug = seatService.getDebugInfo();
             
             // Add consumable info for each user
-            RoomSeatUserManager.RoomMapping allRooms = roomSeatUserManager.getAllRooms();
-            for (RoomSeatUserManager.RoomInfo room : allRooms.getRooms().values()) {
-                for (RoomSeatUserManager.UserInfo user : room.getSeats().values()) {
-                    List<Consumable> consumables = userStatusService.getConsumables(user.getUserId(), user.getRoomId(), user.getSeatId());
+            SeatService.RoomMapping allRooms = seatService.getAllRooms();
+            for (SeatService.RoomInfo room : allRooms.getRooms().values()) {
+                for (SeatService.UserInfo user : room.getSeats().values()) {
+                    List<Consumable> consumables = consumableService.getConsumables(user.getUserId(), user.getRoomId(), user.getSeatId());
                     
                     // Add consumable info to the debug data
                     @SuppressWarnings("unchecked")
@@ -533,7 +533,7 @@ public class DebugController {
     @PostMapping("/clear-mappings")
     public Map<String, Object> clearMappings() {
         try {
-            roomSeatUserManager.clearAll();
+            seatService.clearAll();
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("message", "All room/seat/user mappings cleared");
@@ -552,7 +552,7 @@ public class DebugController {
     @PostMapping("/clear-consumables")
     public Map<String, Object> clearConsumables() {
         try {
-            userStatusService.clearAllConsumables();
+            consumableService.clearAllConsumables();
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("message", "All consumables cleared from Redis");

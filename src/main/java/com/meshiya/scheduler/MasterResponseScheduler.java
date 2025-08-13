@@ -44,10 +44,10 @@ public class MasterResponseScheduler {
     private final Map<String, LocalDateTime> lastResponses = new HashMap<>();
     private final Map<String, LocalDateTime> lastLlmCalls = new HashMap<>();
     
-    // Configuration - with rate limiting
+    // Configuration - optimized for faster responses
     private static final int MIN_MESSAGES_BEFORE_ANALYSIS = 1; // Allow single messages to trigger
-    private static final int MIN_SECONDS_BETWEEN_RESPONSES = 30; // Increased from 15 to 30 seconds
-    private static final int MIN_SECONDS_BETWEEN_LLM_CALLS = 45; // Rate limit LLM calls independently
+    private static final int MIN_SECONDS_BETWEEN_RESPONSES = 10; // Faster response - reduced from 30 to 10
+    private static final int MIN_SECONDS_BETWEEN_LLM_CALLS = 15; // Faster LLM calls - reduced from 45 to 15
     
     // Default room for now (can be made configurable)
     private static final String DEFAULT_ROOM = "room1";
@@ -73,10 +73,10 @@ public class MasterResponseScheduler {
     }
     
     /**
-     * Slower scheduler - runs every 15 seconds to check for conversations to analyze
+     * Faster scheduler - runs every 5 seconds for quicker responses
      * Let the LLM decide whether Master should respond, with rate limiting
      */
-    @Scheduled(fixedRate = 15000) // Every 15 seconds (reduced frequency)
+    @Scheduled(fixedRate = 5000) // Every 5 seconds (increased frequency)
     public void quickAnalysis() {
         logger.debug("Running quick analysis check for {} rooms", messageBuffers.size());
         

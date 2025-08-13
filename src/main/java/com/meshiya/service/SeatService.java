@@ -17,9 +17,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * Simplifies the complex relationship tracking across the system
  */
 @Service
-public class RoomSeatUserManager {
+public class SeatService {
     
-    private static final Logger logger = LoggerFactory.getLogger(RoomSeatUserManager.class);
+    private static final Logger logger = LoggerFactory.getLogger(SeatService.class);
     
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
