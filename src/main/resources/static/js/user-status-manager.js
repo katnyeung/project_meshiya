@@ -548,10 +548,10 @@ class UserStatusManager {
      * Start client-side timer for smooth countdown updates
      */
     startClientTimer() {
-        // Update every second for smooth countdown
+        // Update every 10 seconds to reduce unnecessary refreshes
         this.clientTimerInterval = setInterval(() => {
             this.updateClientTimers();
-        }, 1000);
+        }, 10000);
     }
     
     /**
@@ -561,7 +561,7 @@ class UserStatusManager {
         // No more client-side timer calculations - just refresh displays occasionally
         const now = Date.now();
         
-        if (now - this.lastClientUpdate > 2000) { // Refresh every 2 seconds
+        if (now - this.lastClientUpdate > 10000) { // Refresh every 10 seconds
             this.userStatuses.forEach((statusData, seatId) => {
                 if (statusData.consumables && statusData.consumables.length > 0) {
                     this.updateStatusDisplay(seatId);

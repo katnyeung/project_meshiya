@@ -580,6 +580,18 @@ class UIManager {
         }
     }
 
+    handleOrderNotification(message) {
+        console.log('UI Manager handling order notification:', message);
+        
+        if (message.type === 'FOOD_SERVED') {
+            // Show notification that order is ready
+            this.addSystemMessage(`🍽️ Your ${message.content} is ready!`);
+            
+            // Play a notification sound if available
+            this.playNotificationSound();
+        }
+    }
+
     updateMasterStatus(status, displayName) {
         if (!this.elements.masterStatusLabel || !this.elements.masterStatusText) {
             return;
@@ -595,6 +607,27 @@ class UIManager {
         
         // Update text
         this.elements.masterStatusText.textContent = displayName || status.replace('_', ' ');
+    }
+
+    playNotificationSound() {
+        try {
+            // Create a simple notification beep
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.3);
+        } catch (error) {
+            console.log('Could not play notification sound:', error);
+        }
     }
 
     // Public methods for external access

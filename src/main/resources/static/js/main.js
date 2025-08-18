@@ -66,6 +66,11 @@ class MeshiyaApp {
                 window.userStatusManager.handleUserStatusUpdate(message);
             }
         });
+
+        // Connect order notifications to UI
+        this.wsClient.onOrderNotification((message) => {
+            this.uiManager.handleOrderNotification(message);
+        });
     }
 
     // Public API for debugging/external access

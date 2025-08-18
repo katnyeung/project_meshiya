@@ -10,11 +10,18 @@ class WebSocketClient {
         this.connectionHandlers = [];
         this.masterStatusHandlers = [];
         this.userStatusHandlers = [];
+        this.orderNotificationHandlers = [];
     }
 
     connect(username) {
         this.username = username;
-        this.userId = this.generateUserId();
+        
+        // IMPORTANT: Only use generateUserId() as absolute fallback
+        // The normal flow should always use connectWithExistingSession()
+        if (!this.userId) {
+            console.warn('Fallback: Generating random userId - this should not happen in normal flow');
+            this.userId = this.generateUserId();
+        }
         
         console.log('Creating WebSocket connection to /ws/cafe');
         console.log('Username:', username, 'UserID:', this.userId);
@@ -90,6 +97,12 @@ class WebSocketClient {
             this.handleUserStatusUpdate(JSON.parse(messageOutput.body));
         });
         
+        // Subscribe to personal order notifications
+        this.stompClient.subscribe('/user/queue/orders', (messageOutput) => {
+            console.log('Received personal order notification:', messageOutput.body);
+            this.handleOrderNotification(JSON.parse(messageOutput.body));
+        });
+        
         // Join Room1
         this.stompClient.send("/app/room.join", {}, JSON.stringify({
             userId: this.userId,
@@ -116,8 +129,13 @@ class WebSocketClient {
         // Try to reconnect after 5 seconds (longer delay)
         setTimeout(() => {
             if (!this.connected && this.username) {
-                console.log('Attempting to reconnect...');
-                this.connect(this.username);
+                console.log('Attempting to reconnect with existing session...');
+                // Use existing session if we have it
+                if (this.userId) {
+                    this.connectWithExistingSession(this.userId, this.username);
+                } else {
+                    this.connect(this.username);
+                }
             }
         }, 5000);
     }
@@ -212,6 +230,11 @@ class WebSocketClient {
         this.notifyUserStatusHandlers(message);
     }
 
+    handleOrderNotification(message) {
+        console.log('Handling order notification:', message);
+        this.notifyOrderNotificationHandlers(message);
+    }
+
     // Event handler management
     onMessage(handler) {
         this.messageHandlers.push(handler);
@@ -233,6 +256,10 @@ class WebSocketClient {
         this.userStatusHandlers.push(handler);
     }
 
+    onOrderNotification(handler) {
+        this.orderNotificationHandlers.push(handler);
+    }
+
     notifyMessageHandlers(message) {
         this.messageHandlers.forEach(handler => handler(message));
     }
@@ -251,6 +278,10 @@ class WebSocketClient {
 
     notifyUserStatusHandlers(message) {
         this.userStatusHandlers.forEach(handler => handler(message));
+    }
+
+    notifyOrderNotificationHandlers(message) {
+        this.orderNotificationHandlers.forEach(handler => handler(message));
     }
 
     /**

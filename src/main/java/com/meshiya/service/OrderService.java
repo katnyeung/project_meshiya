@@ -46,6 +46,9 @@ public class OrderService {
     @Autowired
     private MasterConfiguration.MasterConfig masterConfig;
     
+    @Autowired
+    private ImageGenerationService imageGenerationService;
+    
     // Order queue management
     private final Queue<Order> orderQueue = new ConcurrentLinkedQueue<>();
     private final Map<String, Order> activeOrders = new ConcurrentHashMap<>();
@@ -171,6 +174,12 @@ public class OrderService {
                     persistUserOrders(userId);
                     
                     notifyStatusChange(order, OrderStatus.ORDERED);
+                    
+                    // Send confirmation message while we generate the image
+                    sendOrderConfirmationMessage(userName, customItem.getName());
+                    
+                    // Generate image asynchronously (in background)
+                    generateImageForOrder(order, customItem);
                     
                     logger.info("LLM order placed: {} ordered custom {} in room {}", userName, customItem.getName(), roomId);
                     return true;
@@ -311,9 +320,9 @@ public class OrderService {
      */
     private int getDefaultPrepTime(MenuItemType type) {
         return switch (type) {
-            case DRINK -> 30; // 30 seconds for drinks
-            case FOOD -> 120; // 2 minutes for food  
-            case DESSERT -> 60; // 1 minute for desserts
+            case DRINK -> 15; // 15 seconds for drinks
+            case FOOD -> 60; // 1 minute for food  
+            case DESSERT -> 30; // 30 seconds for desserts
         };
     }
     
@@ -491,8 +500,9 @@ public class OrderService {
         
         messagingTemplate.convertAndSendToUser(order.getUserId(), "/queue/orders", servedMessage);
         
-        // Add consumable to user status
-        consumableService.addConsumable(order.getUserId(), order.getRoomId(), order.getSeatId(), order.getMenuItem());
+        // Add consumable to user status (with image data if available)
+        consumableService.addConsumableWithImage(order.getUserId(), order.getRoomId(), order.getSeatId(), 
+                                                order.getMenuItem(), order.getImageData());
         
         // Update persisted orders
         persistUserOrders(order.getUserId());
@@ -580,12 +590,12 @@ public class OrderService {
             "<foodname>Creative Name</foodname>\n" +
             "<description>Brief description</description>\n" +
             "<type>FOOD|DRINK|DESSERT</type>\n" +
-            "<preptime>120</preptime>\n" +
+            "<preptime>60</preptime>\n" +
             "<consumetime>600</consumetime>\n\n" +
             "Examples:\n" +
-            "- 'tea' → <foodname>Warm Green Tea</foodname><type>DRINK</type>\n" +
-            "- 'spicy food' → <foodname>Spicy Ramen</foodname><type>FOOD</type>\n" +
-            "- 'sweet' → <foodname>Sweet Treat</foodname><type>DESSERT</type>";
+            "- 'tea' → <foodname>Warm Green Tea</foodname><type>DRINK</type><preptime>15</preptime>\n" +
+            "- 'spicy food' → <foodname>Spicy Ramen</foodname><type>FOOD</type><preptime>60</preptime>\n" +
+            "- 'sweet' → <foodname>Sweet Treat</foodname><type>DESSERT</type><preptime>30</preptime>";
     }
 
     /**
@@ -874,5 +884,44 @@ public class OrderService {
     private String generateOrderId() {
         return "order_" + System.currentTimeMillis() + "_" + 
                Integer.toHexString(new Random().nextInt(0xffff));
+    }
+    
+    /**
+     * Send confirmation message to user when LLM order is received
+     */
+    private void sendOrderConfirmationMessage(String userName, String itemName) {
+        String message = String.format("%s, I'll prepare your %s. Let me create something special for you...", 
+                                     userName, itemName);
+        sendMasterChatMessage(message);
+    }
+    
+    /**
+     * Generate image for an order asynchronously
+     */
+    private void generateImageForOrder(Order order, MenuItem menuItem) {
+        // Run image generation in a separate thread to avoid blocking the order queue
+        new Thread(() -> {
+            try {
+                logger.debug("Starting image generation for order {} - {}", order.getOrderId(), menuItem.getName());
+                
+                String imageData = imageGenerationService.generateFoodImage(
+                    menuItem.getName(), 
+                    menuItem.getDescription(), 
+                    menuItem.getType().name()
+                );
+                
+                if (imageData != null) {
+                    // Store the image data with the order for later use
+                    order.setImageData(imageData);
+                    logger.info("Image generated successfully for order {} - {}", order.getOrderId(), menuItem.getName());
+                } else {
+                    logger.warn("Image generation failed for order {} - {}", order.getOrderId(), menuItem.getName());
+                }
+                
+            } catch (Exception e) {
+                logger.error("Error generating image for order {} - {}: {}", 
+                           order.getOrderId(), menuItem.getName(), e.getMessage(), e);
+            }
+        }).start();
     }
 }

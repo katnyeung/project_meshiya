@@ -50,6 +50,9 @@ public class RoomController {
         
         logger.info("User {} ({}) joining room {}", userName, userId, roomId);
         
+        // Clean up any ghost users for this username before joining
+        seatService.cleanupGhostUsersForUserName(userName, userId);
+        
         // Track user activity and create/update profile
         userService.updateUserActivity(userId, userName, roomId);
         

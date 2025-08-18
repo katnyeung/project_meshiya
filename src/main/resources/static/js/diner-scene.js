@@ -13,6 +13,7 @@ class DinerScene {
             seats: [],
             customers: [],
             userStatusBoxes: [],
+            userImageBoxes: [], // Separate image display boxes
             masterStatusLabel: null
         };
         this.raycaster = new THREE.Raycaster();
@@ -668,16 +669,32 @@ class DinerScene {
             const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
             const statusSprite = new THREE.Sprite(material);
             
-            // Position above each seat
+            // Position above each seat - moved up higher
             const seat = this.seats[i];
             if (seat) {
-                statusSprite.position.set(seat.position.x, seat.position.y + 2, 3);
+                statusSprite.position.set(seat.position.x, seat.position.y + 2.5, 3);
                 statusSprite.scale.set(2.5, 1, 1);
             }
             statusSprite.visible = false; // Initially hidden
             
             this.sprites.userStatusBoxes.push(statusSprite);
             this.scene.add(statusSprite);
+            
+            // Create separate image display sprite
+            const imageCanvas = this.createUserImageCanvas('');
+            const imageTexture = new THREE.CanvasTexture(imageCanvas);
+            const imageMaterial = new THREE.SpriteMaterial({ map: imageTexture, transparent: true });
+            const imageSprite = new THREE.Sprite(imageMaterial);
+            
+            // Position image box centered where status box used to be
+            if (seat) {
+                imageSprite.position.set(seat.position.x, seat.position.y + 1.8, 3);
+                imageSprite.scale.set(1.2, 1.2, 1);
+            }
+            imageSprite.visible = false; // Initially hidden
+            
+            this.sprites.userImageBoxes.push(imageSprite);
+            this.scene.add(imageSprite);
         }
     }
     
@@ -715,6 +732,109 @@ class DinerScene {
         });
         
         return canvas;
+    }
+    
+    createUserImageCanvas(imageData, callback) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        
+        if (!imageData) {
+            // Empty transparent canvas for hidden state
+            if (callback) callback(canvas);
+            return canvas;
+        }
+        
+        // Create a promise-based image loading for base64 data
+        const img = new Image();
+        img.onload = () => {
+            // Clear canvas for complete transparency
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the food image directly with no background or border
+            // Use full canvas size for the image
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            if (callback) callback(canvas);
+        };
+        
+        img.onerror = () => {
+            console.warn('Failed to load food image');
+            // For transparent design, just leave canvas empty on error
+            // The image sprite will remain hidden if no image loads
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (callback) callback(canvas);
+        };
+        
+        // Set image source (base64 data)
+        if (imageData.startsWith('data:image/')) {
+            img.src = imageData;
+        } else {
+            // Assume base64 encoded PNG
+            img.src = 'data:image/png;base64,' + imageData;
+        }
+        
+        return canvas;
+    }
+    
+    createCombinedImageCanvas(consumablesWithImages, callback) {
+        const imageSize = 128;
+        const spacing = 8; // Small gap between images
+        const totalWidth = (imageSize * consumablesWithImages.length) + (spacing * (consumablesWithImages.length - 1));
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = totalWidth;
+        canvas.height = imageSize;
+        const ctx = canvas.getContext('2d');
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        let loadedImages = 0;
+        const totalImages = consumablesWithImages.length;
+        
+        // Load all images and draw them side by side
+        consumablesWithImages.forEach((consumable, index) => {
+            const img = new Image();
+            img.onload = () => {
+                // Calculate position for this image
+                const x = index * (imageSize + spacing);
+                
+                // Draw the image
+                ctx.drawImage(img, x, 0, imageSize, imageSize);
+                
+                loadedImages++;
+                if (loadedImages === totalImages) {
+                    // All images loaded, callback with completed canvas
+                    if (callback) callback(canvas);
+                }
+            };
+            
+            img.onerror = () => {
+                console.warn(`Failed to load food image for ${consumable.itemName}`);
+                loadedImages++;
+                if (loadedImages === totalImages) {
+                    // All images processed (including errors), callback with canvas
+                    if (callback) callback(canvas);
+                }
+            };
+            
+            // Set image source
+            if (consumable.imageData.startsWith('data:image/')) {
+                img.src = consumable.imageData;
+            } else {
+                img.src = 'data:image/png;base64,' + consumable.imageData;
+            }
+        });
+    }
+    
+    hideUserImageSprite(seatId) {
+        const seatIndex = seatId - 1;
+        if (seatIndex >= 0 && seatIndex < this.sprites.userImageBoxes.length) {
+            this.sprites.userImageBoxes[seatIndex].visible = false;
+        }
     }
     
     updateMasterStatusSprite(status, displayName) {
@@ -786,12 +906,55 @@ class DinerScene {
         }
         
         statusSprite.visible = true;
+        
+        // Update image display if any consumable has image data
+        this.updateUserImageSprite(seatId, uniqueConsumables);
+    }
+    
+    updateUserImageSprite(seatId, consumables) {
+        const seatIndex = seatId - 1;
+        if (seatIndex < 0 || seatIndex >= this.sprites.userImageBoxes.length) return;
+        
+        // Find all consumables with image data
+        const consumablesWithImages = consumables.filter(c => c.imageData && c.imageData.trim());
+        
+        if (consumablesWithImages.length === 0) {
+            this.hideUserImageSprite(seatId);
+            return;
+        }
+        
+        console.log(`Updating image sprite for seat ${seatId} with ${consumablesWithImages.length} food images`);
+        
+        // Create a combined canvas with all images side by side
+        this.createCombinedImageCanvas(consumablesWithImages, (canvas) => {
+            const imageSprite = this.sprites.userImageBoxes[seatIndex];
+            if (imageSprite) {
+                const texture = new THREE.CanvasTexture(canvas);
+                imageSprite.material.map = texture;
+                imageSprite.material.needsUpdate = true;
+                imageSprite.visible = true;
+                
+                // Adjust scale to keep images reasonably sized and centered
+                const baseScale = 1.2;
+                const maxWidth = 2.5; // Maximum width to prevent overlap with other seats
+                
+                // Calculate appropriate scale to fit within max width
+                const naturalWidth = baseScale * consumablesWithImages.length;
+                const finalScale = naturalWidth > maxWidth ? maxWidth / consumablesWithImages.length : baseScale;
+                
+                imageSprite.scale.set(finalScale * consumablesWithImages.length, finalScale, 1);
+            }
+        });
     }
     
     hideUserStatusSprite(seatId) {
         const seatIndex = seatId - 1;
         if (seatIndex >= 0 && seatIndex < this.sprites.userStatusBoxes.length) {
             this.sprites.userStatusBoxes[seatIndex].visible = false;
+        }
+        // Also hide image sprite
+        if (seatIndex >= 0 && seatIndex < this.sprites.userImageBoxes.length) {
+            this.sprites.userImageBoxes[seatIndex].visible = false;
         }
     }
     
@@ -805,6 +968,10 @@ class DinerScene {
         // Hide all user status sprites (used when user changes seats)
         for (let i = 0; i < this.sprites.userStatusBoxes.length; i++) {
             this.sprites.userStatusBoxes[i].visible = false;
+        }
+        // Also hide all image sprites
+        for (let i = 0; i < this.sprites.userImageBoxes.length; i++) {
+            this.sprites.userImageBoxes[i].visible = false;
         }
     }
     
