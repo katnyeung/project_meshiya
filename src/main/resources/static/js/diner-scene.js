@@ -154,18 +154,67 @@ class DinerScene {
     }
     
     createMasterSprite() {
-        // Try to load external chef image first
+        // Initialize chef state management
+        this.chefState = 'normal'; // normal, prepare, thinking
+        
+        // Try to load external chef image first with new structure
+        this.loadChefImage('normal');
+    }
+
+    loadChefImage(state) {
         const loader = new THREE.TextureLoader();
-        loader.load('/assets/images/chef.png', (texture) => {
+        const imagePath = `/assets/images/chef/chef_${state}.png`;
+        
+        loader.load(imagePath, (texture) => {
             const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
-            this.sprites.master = new THREE.Sprite(material);
-            this.sprites.master.position.set(0, 1, 0);
-            this.sprites.master.scale.set(4, 4, 1);
-            this.scene.add(this.sprites.master);
+            
+            if (this.sprites.master) {
+                // Update existing sprite material
+                this.sprites.master.material = material;
+                this.sprites.master.material.needsUpdate = true;
+            } else {
+                // Create new sprite
+                this.sprites.master = new THREE.Sprite(material);
+                // Position chef at Y: -1 and behind counter (z = -2)
+                this.sprites.master.position.set(0, -1, -2);
+                this.scene.add(this.sprites.master);
+            }
+            
+            // Handle dynamic sizing for 1280px height with variable width
+            this.updateChefScale(texture);
+            this.chefState = state;
+            
         }, undefined, (error) => {
-            console.warn('Could not load chef.png, falling back to canvas master');
+            console.warn(`Could not load chef_${state}.png, falling back to canvas master`);
             this.createFallbackMaster();
         });
+    }
+
+    updateChefScale(texture) {
+        if (!this.sprites.master || !texture.image) return;
+        
+        const imageWidth = texture.image.width;
+        const imageHeight = texture.image.height;
+        
+        // Target height is fixed at 8 units (4 * 2x multiplier for full body)
+        const baseHeight = 4;
+        const sizeMultiplier = 2;
+        const targetHeight = baseHeight * sizeMultiplier;
+        
+        // Calculate width scale based on image aspect ratio
+        // Base calculation: if image was 1024x1024, scale would be 4x4
+        // Now: if image is 1280px height, maintain same visual height, adjust width proportionally
+        const aspectRatio = imageWidth / imageHeight;
+        const targetWidth = targetHeight * aspectRatio;
+        
+        this.sprites.master.scale.set(targetWidth, targetHeight, 1);
+    }
+
+    updateChefImage(newState) {
+        if (newState !== this.chefState) {
+            console.log(`Updating chef image from ${this.chefState} to ${newState}`);
+            this.loadChefImage(newState);
+        }
     }
     
     createFallbackMaster() {
@@ -203,8 +252,9 @@ class DinerScene {
         const texture = new THREE.CanvasTexture(canvas);
         const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
         this.sprites.master = new THREE.Sprite(material);
-        this.sprites.master.position.set(0, 1, 0);
-        this.sprites.master.scale.set(4, 4, 1);
+        // Position chef at Y: -1 and behind counter (z = -2)
+        this.sprites.master.position.set(0, -1, -2);
+        this.sprites.master.scale.set(8, 8, 1); // Increased by 2x from 4,4
         this.scene.add(this.sprites.master);
     }
     
@@ -669,10 +719,10 @@ class DinerScene {
             const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
             const statusSprite = new THREE.Sprite(material);
             
-            // Position above each seat - moved up higher
+            // Position above each seat with increased spacing from food image
             const seat = this.seats[i];
             if (seat) {
-                statusSprite.position.set(seat.position.x, seat.position.y + 2.5, 3);
+                statusSprite.position.set(seat.position.x, seat.position.y + 2.8, 3);
                 statusSprite.scale.set(2.5, 1, 1);
             }
             statusSprite.visible = false; // Initially hidden
@@ -686,9 +736,9 @@ class DinerScene {
             const imageMaterial = new THREE.SpriteMaterial({ map: imageTexture, transparent: true });
             const imageSprite = new THREE.Sprite(imageMaterial);
             
-            // Position image box centered where status box used to be
+            // Position image box with increased spacing from user
             if (seat) {
-                imageSprite.position.set(seat.position.x, seat.position.y + 1.8, 3);
+                imageSprite.position.set(seat.position.x, seat.position.y + 2.0, 3);
                 imageSprite.scale.set(1.2, 1.2, 1);
             }
             imageSprite.visible = false; // Initially hidden

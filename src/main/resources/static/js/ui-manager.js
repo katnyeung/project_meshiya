@@ -576,7 +576,29 @@ class UIManager {
             // Also update the Three.js sprite
             if (window.meshiya && window.meshiya.dinerScene) {
                 window.meshiya.dinerScene.updateMasterStatusSprite(message.status, message.displayName);
+                
+                // Update chef image based on status
+                const chefState = this.getChefStateFromStatus(message.status);
+                window.meshiya.dinerScene.updateChefImage(chefState);
             }
+        }
+    }
+
+    getChefStateFromStatus(status) {
+        // Map master status to chef image states
+        switch (status?.toLowerCase()) {
+            case 'thinking':
+                return 'thinking';
+            case 'preparing_order':
+            case 'preparing order':
+            case 'busy':
+            case 'serving':
+                return 'prepare';
+            case 'idle':
+            case 'conversing':
+            case 'cleaning':
+            default:
+                return 'normal';
         }
     }
 
