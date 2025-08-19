@@ -437,6 +437,11 @@ class UIManager {
         `;
         
         this.appendMessage(messageEl, timestamp);
+        
+        // Also trigger chef speech bubble animation
+        if (window.meshiya && window.meshiya.dinerScene) {
+            window.meshiya.dinerScene.showChefSpeechBubble(content);
+        }
     }
 
     appendMessage(messageEl, timestamp) {

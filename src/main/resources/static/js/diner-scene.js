@@ -14,10 +14,22 @@ class DinerScene {
             customers: [],
             userStatusBoxes: [],
             userImageBoxes: [], // Separate image display boxes
-            masterStatusLabel: null
+            masterStatusLabel: null,
+            chefSpeechBubble: null // Speech bubble above chef's head
         };
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
+        
+        // Speech bubble animation properties
+        this.speechBubble = {
+            isAnimating: false,
+            currentMessage: '',
+            sentences: [],
+            currentSentenceIndex: 0,
+            currentWordInSentence: 0,
+            displayedSentences: [], // Track displayed sentences for 2-line limit
+            animationTimer: null
+        };
         
         this.init();
     }
@@ -674,6 +686,9 @@ class DinerScene {
         
         // Create user status box sprites for each seat
         this.createUserStatusSprites();
+        
+        // Create chef speech bubble sprite
+        this.createChefSpeechBubble();
     }
     
     createMasterStatusSprite() {
@@ -1101,6 +1116,247 @@ class DinerScene {
         }
         
         return result;
+    }
+
+    createChefSpeechBubble() {
+        // Create initial empty canvas for speech bubble
+        const canvas = this.createSpeechBubbleCanvas('');
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        this.sprites.chefSpeechBubble = new THREE.Sprite(material);
+        
+        // Position to the right side of the chef
+        this.sprites.chefSpeechBubble.position.set(3, 1, -1.9);
+        this.sprites.chefSpeechBubble.scale.set(4, 2, 1);
+        this.sprites.chefSpeechBubble.visible = false; // Initially hidden
+        this.scene.add(this.sprites.chefSpeechBubble);
+    }
+
+    createSpeechBubbleCanvas(text) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 400;
+        canvas.height = 150;
+        const ctx = canvas.getContext('2d');
+        
+        if (!text) {
+            // Empty canvas for hidden state
+            return canvas;
+        }
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Speech bubble background
+        const bubbleX = 10;
+        const bubbleY = 10;
+        const bubbleWidth = canvas.width - 20;
+        const bubbleHeight = canvas.height - 30;
+        
+        // Main bubble
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 3;
+        this.drawRoundedRect(ctx, bubbleX, bubbleY, bubbleWidth, bubbleHeight, 15);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Speech pointer (triangle pointing left toward chef)
+        const pointerX = bubbleX;
+        const pointerY = bubbleY + bubbleHeight / 2;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.beginPath();
+        ctx.moveTo(pointerX, pointerY - 15);
+        ctx.lineTo(pointerX, pointerY + 15);
+        ctx.lineTo(pointerX - 15, pointerY);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Pointer border
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        // Text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 15px Trebuchet MS';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        
+        // Split text into sentences for line-by-line display
+        const sentences = text.split(/([.!?])/);
+        const completeSentences = [];
+        
+        // Rebuild sentences (combine text with punctuation)
+        for (let i = 0; i < sentences.length; i += 2) {
+            if (sentences[i] && sentences[i].trim()) {
+                const sentence = sentences[i].trim() + (sentences[i + 1] || '');
+                if (sentence.length > 0) {
+                    completeSentences.push(sentence);
+                }
+            }
+        }
+        
+        // Limit to 2 sentences max
+        const displaySentences = completeSentences.slice(-2);
+        
+        // Word wrap each sentence and create final display lines
+        const maxWidth = bubbleWidth - 40; // Leave padding
+        const wrappedLines = [];
+        
+        displaySentences.forEach(sentence => {
+            const words = sentence.split(' ');
+            let currentLine = '';
+            
+            words.forEach(word => {
+                const testLine = currentLine ? currentLine + ' ' + word : word;
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && currentLine) {
+                    // Current line is full, start new line
+                    wrappedLines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = testLine;
+                }
+            });
+            
+            // Add the last line of this sentence
+            if (currentLine) {
+                wrappedLines.push(currentLine);
+            }
+        });
+        
+        // Draw text lines with left alignment
+        const lineHeight = 24;
+        const textStartX = bubbleX + 20; // Left padding
+        const textStartY = bubbleY + 20; // Top padding
+        
+        wrappedLines.forEach((line, index) => {
+            ctx.fillText(line, textStartX, textStartY + index * lineHeight);
+        });
+        
+        return canvas;
+    }
+
+    showChefSpeechBubble(message) {
+        // Clear any existing animation
+        this.hideChefSpeechBubble();
+        
+        // Split message into sentences
+        const sentenceParts = message.split(/([.!?])/);
+        const sentences = [];
+        
+        for (let i = 0; i < sentenceParts.length; i += 2) {
+            if (sentenceParts[i] && sentenceParts[i].trim()) {
+                const sentence = sentenceParts[i].trim() + (sentenceParts[i + 1] || '');
+                if (sentence.length > 0) {
+                    sentences.push(sentence);
+                }
+            }
+        }
+        
+        // Initialize animation state
+        this.speechBubble.currentMessage = message;
+        this.speechBubble.sentences = sentences;
+        this.speechBubble.currentSentenceIndex = 0;
+        this.speechBubble.currentWordInSentence = 0;
+        this.speechBubble.displayedSentences = [];
+        this.speechBubble.isAnimating = true;
+        
+        // Start sentence-by-sentence animation
+        this.animateNextSentence();
+    }
+
+    animateNextSentence() {
+        if (!this.speechBubble.isAnimating || 
+            this.speechBubble.currentSentenceIndex >= this.speechBubble.sentences.length) {
+            // Animation complete - hold for a shorter time then hide
+            setTimeout(() => {
+                this.hideChefSpeechBubble();
+            }, 2000);
+            return;
+        }
+        
+        // Start animating current sentence word by word
+        this.speechBubble.currentWordInSentence = 0;
+        this.animateWordsInCurrentSentence();
+    }
+
+    animateWordsInCurrentSentence() {
+        const currentSentence = this.speechBubble.sentences[this.speechBubble.currentSentenceIndex];
+        if (!currentSentence) return;
+        
+        const words = currentSentence.split(' ');
+        
+        if (this.speechBubble.currentWordInSentence >= words.length) {
+            // Current sentence complete - add to displayed sentences
+            this.speechBubble.displayedSentences.push(currentSentence);
+            
+            // Keep only last 2 sentences
+            if (this.speechBubble.displayedSentences.length > 2) {
+                this.speechBubble.displayedSentences.shift();
+            }
+            
+            // Move to next sentence after pause
+            this.speechBubble.currentSentenceIndex++;
+            this.speechBubble.animationTimer = setTimeout(() => {
+                this.animateNextSentence();
+            }, 900); // Pause between sentences
+            return;
+        }
+        
+        // Build current sentence progress
+        const currentWords = words.slice(0, this.speechBubble.currentWordInSentence + 1);
+        const currentSentenceProgress = currentWords.join(' ');
+        
+        // Combine with previous completed sentences
+        const allSentences = [...this.speechBubble.displayedSentences, currentSentenceProgress];
+        const displayText = allSentences.join(' ');
+        
+        // Update speech bubble
+        const canvas = this.createSpeechBubbleCanvas(displayText);
+        if (this.sprites.chefSpeechBubble) {
+            this.sprites.chefSpeechBubble.material.map = new THREE.CanvasTexture(canvas);
+            this.sprites.chefSpeechBubble.material.needsUpdate = true;
+            this.sprites.chefSpeechBubble.visible = true;
+        }
+        
+        // Move to next word
+        this.speechBubble.currentWordInSentence++;
+        
+        // Calculate delay for next word
+        const currentWord = words[this.speechBubble.currentWordInSentence - 1] || '';
+        let delay = 140; // Fast word display
+        
+        if (currentWord.includes(',') || currentWord.includes(';')) {
+            delay = 400; // Medium pause for commas
+        }
+        
+        // Schedule next word
+        this.speechBubble.animationTimer = setTimeout(() => {
+            this.animateWordsInCurrentSentence();
+        }, delay);
+    }
+
+    hideChefSpeechBubble() {
+        // Clear any ongoing animation
+        if (this.speechBubble.animationTimer) {
+            clearTimeout(this.speechBubble.animationTimer);
+            this.speechBubble.animationTimer = null;
+        }
+        
+        // Reset animation state
+        this.speechBubble.isAnimating = false;
+        this.speechBubble.currentMessage = '';
+        this.speechBubble.sentences = [];
+        this.speechBubble.currentSentenceIndex = 0;
+        this.speechBubble.currentWordInSentence = 0;
+        this.speechBubble.displayedSentences = [];
+        
+        // Hide sprite
+        if (this.sprites.chefSpeechBubble) {
+            this.sprites.chefSpeechBubble.visible = false;
+        }
     }
 
     getSeatStates() {
