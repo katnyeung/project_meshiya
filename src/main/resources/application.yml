@@ -20,6 +20,15 @@ meshiya:
     timeout:
       minutes: 10  # Users will be logged out after 10 minutes of inactivity
 
+# Image Generation Configuration
+image:
+  generation:
+    enabled: true  # Set to false to disable image generation
+    api:
+      url: http://localhost:5000/generate  # External image generation service
+  storage:
+    path: /static/assets/generated  # Where to store generated images
+
 # LLM Configuration
 llm:
   # Chat/Conversation configuration - Switchable providers
@@ -29,7 +38,7 @@ llm:
       url: https://api.perplexity.ai/chat/completions
     model: sonar  # Provider-specific model name
     timeout: 30000
-  
+
   # Order processing configuration - Switchable providers (optimized for fast, structured responses)
   order:
     provider: perplexity  # Options: perplexity, openai, ollama

@@ -121,8 +121,17 @@ public class SeatService {
         if (room.getSeats().containsKey(seatId)) {
             UserInfo existingUser = room.getSeats().get(seatId);
             if (!existingUser.getUserId().equals(userId)) {
-                logger.warn("Seat {} in room {} is already occupied by {}", seatId, roomId, existingUser.getUserId());
-                return false;
+                // Check if this might be a ghost user with same username but different session format
+                if (existingUser.getUserName().equals(userName) && isLikelyGhostUser(existingUser.getUserId(), userId)) {
+                    logger.info("Removing ghost user {} and allowing real user {} to join seat {}", 
+                               existingUser.getUserId(), userId, seatId);
+                    // Remove the ghost user and continue with joining
+                    room.getSeats().remove(seatId);
+                } else {
+                    logger.warn("Seat {} in room {} is already occupied by {} (not a ghost)", 
+                               seatId, roomId, existingUser.getUserId());
+                    return false;
+                }
             }
         }
         
@@ -177,6 +186,59 @@ public class SeatService {
         }
         
         return false;
+    }
+    
+    /**
+     * Check if a userId is likely a ghost user compared to another userId for the same user
+     */
+    private boolean isLikelyGhostUser(String existingUserId, String newUserId) {
+        // Pattern matching for ghost detection:
+        // - session_ format vs user_ format
+        // - Different session IDs but same user
+        
+        boolean existingIsSession = existingUserId.startsWith("session_");
+        boolean newIsSession = newUserId.startsWith("session_");
+        boolean existingIsUser = existingUserId.startsWith("user_");
+        boolean newIsUser = newUserId.startsWith("user_");
+        
+        // If one is session format and other is user format, likely ghost
+        if ((existingIsUser && newIsSession) || (existingIsSession && newIsUser)) {
+            logger.debug("Ghost user detected: {} vs {} (different ID formats)", existingUserId, newUserId);
+            return true;
+        }
+        
+        // If both are session format but different IDs, the newer session should take precedence
+        if (existingIsSession && newIsSession && !existingUserId.equals(newUserId)) {
+            // Extract timestamp from session IDs to determine which is newer
+            try {
+                long existingTimestamp = extractSessionTimestamp(existingUserId);
+                long newTimestamp = extractSessionTimestamp(newUserId);
+                
+                // If new session is newer, existing is ghost
+                if (newTimestamp > existingTimestamp) {
+                    logger.debug("Ghost user detected: {} is older session than {}", existingUserId, newUserId);
+                    return true;
+                }
+            } catch (Exception e) {
+                logger.debug("Could not compare session timestamps, treating as potential ghost");
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Extract timestamp from session ID format: session_TIMESTAMP_UUID
+     */
+    private long extractSessionTimestamp(String sessionId) throws NumberFormatException {
+        if (sessionId.startsWith("session_")) {
+            String[] parts = sessionId.split("_");
+            if (parts.length >= 3) {
+                return Long.parseLong(parts[1]);
+            }
+        }
+        throw new NumberFormatException("Invalid session ID format");
     }
     
     /**
@@ -241,6 +303,45 @@ public class SeatService {
     public Integer getUserSeatId(String roomId, String userId) {
         UserInfo user = getUserInRoom(roomId, userId);
         return user != null ? user.getSeatId() : null;
+    }
+    
+    /**
+     * Clean up ghost users for a specific username across all rooms
+     * This should be called when a user connects to prevent ghost user accumulation
+     */
+    public synchronized void cleanupGhostUsersForUserName(String userName, String currentUserId) {
+        RoomMapping mapping = getRoomMapping();
+        boolean hasChanges = false;
+        
+        for (RoomInfo room : mapping.getRooms().values()) {
+            List<Integer> seatsToRemove = new ArrayList<>();
+            
+            for (Map.Entry<Integer, UserInfo> seat : room.getSeats().entrySet()) {
+                UserInfo existingUser = seat.getValue();
+                
+                // If same username but different userId, check if it's a ghost
+                if (existingUser.getUserName().equals(userName) && 
+                    !existingUser.getUserId().equals(currentUserId)) {
+                    
+                    if (isLikelyGhostUser(existingUser.getUserId(), currentUserId)) {
+                        logger.info("Cleaning up ghost user {} (username: {}) from seat {} in room {}", 
+                                   existingUser.getUserId(), userName, seat.getKey(), room.getRoomId());
+                        seatsToRemove.add(seat.getKey());
+                        hasChanges = true;
+                    }
+                }
+            }
+            
+            // Remove ghost users
+            for (Integer seatId : seatsToRemove) {
+                room.getSeats().remove(seatId);
+            }
+        }
+        
+        if (hasChanges) {
+            saveRoomMapping(mapping);
+            logger.info("Cleaned up ghost users for username: {}", userName);
+        }
     }
     
     /**

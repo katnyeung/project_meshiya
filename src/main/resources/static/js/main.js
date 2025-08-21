@@ -38,6 +38,8 @@ class MeshiyaApp {
             }, 500);
         }
         
+        // Initialize VideoDisplayManager - will be done when WebSocket connects
+        
         console.log('Meshiya initialization complete');
     }
 
@@ -54,6 +56,13 @@ class MeshiyaApp {
 
         this.wsClient.onConnectionChange((status) => {
             this.uiManager.handleConnectionChange(status);
+            
+            // Initialize VideoDisplayManager when WebSocket connects
+            if (status === 'connected' && window.videoDisplayManager && !window.videoDisplayManager.isInitialized) {
+                // Default to room1 for now - in future, get from current room context
+                window.videoDisplayManager.init('room1');
+                console.log('🎬 VideoDisplayManager initialized after WebSocket connection');
+            }
         });
 
         this.wsClient.onMasterStatusUpdate((message) => {
@@ -65,6 +74,11 @@ class MeshiyaApp {
             if (window.userStatusManager && window.userStatusManager.isInitialized) {
                 window.userStatusManager.handleUserStatusUpdate(message);
             }
+        });
+
+        // Connect order notifications to UI
+        this.wsClient.onOrderNotification((message) => {
+            this.uiManager.handleOrderNotification(message);
         });
     }
 

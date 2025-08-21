@@ -7,6 +7,7 @@ import com.meshiya.service.UserService;
 import com.meshiya.service.SeatService;
 import com.meshiya.service.OrderService;
 import com.meshiya.service.ConsumableService;
+import com.meshiya.service.RoomTVService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +42,9 @@ public class RoomController {
     
     @Autowired
     private ConsumableService consumableService;
+    
+    @Autowired
+    private RoomTVService roomTVService;
 
     @MessageMapping("/room.join")
     public void joinRoom(@Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
@@ -49,6 +53,9 @@ public class RoomController {
         String userName = message.getUserName();
         
         logger.info("User {} ({}) joining room {}", userName, userId, roomId);
+        
+        // Clean up any ghost users for this username before joining
+        seatService.cleanupGhostUsersForUserName(userName, userId);
         
         // Track user activity and create/update profile
         userService.updateUserActivity(userId, userName, roomId);
@@ -60,6 +67,10 @@ public class RoomController {
         
         // Send initial room state to the user
         roomService.sendInitialRoomState(roomId, userId);
+        
+        // Restore TV state for users joining/rejoining the room (for page refreshes)
+        roomTVService.sendTVStateToUser(userId, roomId);
+        logger.debug("TV state restoration sent for user {} joining room {}", userName, roomId);
         
         // Create and broadcast join message
         ChatMessage joinMessage = new ChatMessage();
@@ -82,6 +93,40 @@ public class RoomController {
         
         logger.info("User {} sent message in room {}: {}", 
                    message.getUserName(), roomId, message.getContent());
+        
+        // Check for video commands (following order system pattern)
+        String content = message.getContent();
+        if (content != null) {
+            String trimmedContent = content.trim();
+            
+            if (trimmedContent.startsWith("/play ")) {
+                logger.info("Processing TV play command from {}: {}", message.getUserName(), content);
+                ChatMessage tvResponse = roomTVService.processPlayCommand(message);
+                
+                // Add TV response to room and broadcast it
+                roomService.addMessageToRoom(roomId, tvResponse);
+                return; // Don't process as regular chat message
+            } else if (trimmedContent.equals("/tv stop") || trimmedContent.equals("/stop")) {
+                logger.info("Processing TV stop command from {}: {}", message.getUserName(), content);
+                
+                // Stop the room TV
+                roomTVService.stopRoomTV(roomId, message.getUserId(), message.getUserName());
+                
+                // Create chat message to show who stopped the TV
+                ChatMessage stopChatMessage = new ChatMessage();
+                stopChatMessage.setType(MessageType.SYSTEM_MESSAGE);
+                stopChatMessage.setUserId("system");
+                stopChatMessage.setUserName("System");
+                stopChatMessage.setRoomId(roomId);
+                stopChatMessage.setContent(message.getUserName() + " turned off the TV");
+                stopChatMessage.setTimestamp(java.time.LocalDateTime.now());
+                
+                // Add to room chat
+                roomService.addMessageToRoom(roomId, stopChatMessage);
+                
+                return; // Don't process as regular chat message
+            }
+        }
         
         // Track user activity and create/update profile
         userService.updateUserActivity(message.getUserId(), message.getUserName(), roomId);
@@ -129,6 +174,10 @@ public class RoomController {
                 logger.info("User {} joining seat {} - restoring existing consumables without reset", userName, seatId);
                 consumableService.restoreUserConsumables(userId, roomId, seatId);
             }
+            
+            // Always restore TV state for users joining seats (like turning on TV when entering)
+            roomTVService.sendTVStateToUser(userId, roomId);
+            logger.debug("TV state restoration sent for user {} joining seat {}", userName, seatId);
         }
         
         ChatMessage responseMessage = new ChatMessage();
@@ -155,8 +204,8 @@ public class RoomController {
         
         logger.info("User {} ({}) leaving seat in room {}", userName, userId, roomId);
         
-        // Track user activity and create/update profile
-        userService.updateUserActivity(userId, userName, roomId);
+        // NOTE: Don't update user activity when leaving seat - this prevents 
+        // proper cleanup of inactive/timed-out users
         
         boolean success = roomService.leaveSeat(roomId, userId);
         
@@ -164,6 +213,9 @@ public class RoomController {
         if (success) {
             seatService.leaveSeat(roomId, userId);
             userService.removeUserSeat(userId);
+            
+            // Note: Unlike consumables, we DON'T remove users from video viewers
+            // Video is a shared room experience that continues even when users leave seats
         }
         
         if (success) {
@@ -185,6 +237,9 @@ public class RoomController {
         String userId = message.getUserId();
         
         logger.info("User {} requesting user status refresh for room {}", userId, roomId);
+        
+        // NOTE: Status refresh is automatic/passive - don't update user activity timestamp
+        // This prevents ghost users from staying alive due to automated frontend requests
         
         // Send current user status for all users in the room
         consumableService.broadcastAllUserStatuses(roomId);

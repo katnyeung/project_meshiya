@@ -3,6 +3,7 @@ package com.meshiya.controller;
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
 import com.meshiya.service.ChatService;
+import com.meshiya.service.RoomTVService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,9 @@ public class ChatController {
 
     @Autowired
     private ChatService chatService;
+    
+    @Autowired
+    private RoomTVService roomTVService;
 
     @MessageMapping("/chat.sendMessage")
     @SendTo("/topic/public")
@@ -126,5 +130,54 @@ public class ChatController {
         }
         
         return response;
+    }
+
+    @MessageMapping("/video.control")
+    public void handleVideoControl(@Payload ChatMessage message) {
+        logger.info("Received video control: userId={}, roomId={}, type={}, action={}", 
+                    message.getUserId(), message.getRoomId(), message.getType(), message.getContent());
+        
+        String roomId = message.getRoomId();
+        String userId = message.getUserId();
+        
+        if (roomId == null || userId == null) {
+            logger.warn("Invalid video control message - missing roomId or userId");
+            return;
+        }
+        
+        // Handle video control types for room TV
+        switch (message.getType()) {
+            case VIDEO_STOP:
+                // Stop the room TV (like turning off TV)
+                roomTVService.stopRoomTV(roomId, userId, message.getUserName());
+                logger.info("User {} stopped room TV in {}", message.getUserName(), roomId);
+                break;
+            case VIDEO_PAUSE:
+            case VIDEO_PLAY_REQUEST:
+                // These are now handled locally by frontend - room TV keeps playing
+                logger.debug("Personal video control from {} in room {}: {}", message.getUserName(), roomId, message.getType());
+                break;
+            default:
+                logger.warn("Unhandled video control type: {}", message.getType());
+        }
+    }
+
+    @MessageMapping("/video.join")
+    public void joinVideoSession(@Payload ChatMessage message) {
+        logger.debug("User {} requesting video sync in room {}", message.getUserId(), message.getRoomId());
+        
+        String roomId = message.getRoomId();
+        String userId = message.getUserId();
+        
+        if (roomId != null && userId != null) {
+            // Send current room TV state to user (like looking at the TV when entering)
+            roomTVService.sendTVStateToUser(userId, roomId);
+        }
+    }
+
+    @MessageMapping("/video.leave")
+    public void leaveVideoSession(@Payload ChatMessage message) {
+        // No action needed - room TV continues playing regardless of who's watching
+        logger.debug("User {} no longer watching room TV in {}", message.getUserId(), message.getRoomId());
     }
 }

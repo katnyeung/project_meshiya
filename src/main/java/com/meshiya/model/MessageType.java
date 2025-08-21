@@ -13,5 +13,11 @@ public enum MessageType {
     MOOD_UPDATE,
     AI_MESSAGE,
     SYSTEM_MESSAGE,
-    USER_STATUS_REFRESH
+    USER_STATUS_REFRESH,
+    VIDEO_PLAY_REQUEST,  // User requests to play video
+    VIDEO_START,         // Video starts playing
+    VIDEO_SYNC,          // Periodic sync broadcast
+    VIDEO_PAUSE,         // User pauses locally
+    VIDEO_STOP,          // User stops locally
+    VIDEO_COMPLETE       // Video ends
 }

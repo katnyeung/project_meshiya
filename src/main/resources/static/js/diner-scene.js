@@ -13,10 +13,24 @@ class DinerScene {
             seats: [],
             customers: [],
             userStatusBoxes: [],
-            masterStatusLabel: null
+            userImageBoxes: [], // Separate image display boxes
+            masterStatusLabel: null,
+            chefSpeechBubble: null, // Speech bubble above chef's head
+            tvDisplay: null // TV sprite for video sharing
         };
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
+        
+        // Speech bubble animation properties
+        this.speechBubble = {
+            isAnimating: false,
+            currentMessage: '',
+            sentences: [],
+            currentSentenceIndex: 0,
+            currentWordInSentence: 0,
+            displayedSentences: [], // Track displayed sentences for 2-line limit
+            animationTimer: null
+        };
         
         this.init();
     }
@@ -153,18 +167,67 @@ class DinerScene {
     }
     
     createMasterSprite() {
-        // Try to load external chef image first
+        // Initialize chef state management
+        this.chefState = 'normal'; // normal, prepare, thinking
+        
+        // Try to load external chef image first with new structure
+        this.loadChefImage('normal');
+    }
+
+    loadChefImage(state) {
         const loader = new THREE.TextureLoader();
-        loader.load('/assets/images/chef.png', (texture) => {
+        const imagePath = `/assets/images/chef/chef_${state}.png`;
+        
+        loader.load(imagePath, (texture) => {
             const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
-            this.sprites.master = new THREE.Sprite(material);
-            this.sprites.master.position.set(0, 1, 0);
-            this.sprites.master.scale.set(4, 4, 1);
-            this.scene.add(this.sprites.master);
+            
+            if (this.sprites.master) {
+                // Update existing sprite material
+                this.sprites.master.material = material;
+                this.sprites.master.material.needsUpdate = true;
+            } else {
+                // Create new sprite
+                this.sprites.master = new THREE.Sprite(material);
+                // Position chef at Y: -1 and behind counter (z = -2)
+                this.sprites.master.position.set(0, -1, -2);
+                this.scene.add(this.sprites.master);
+            }
+            
+            // Handle dynamic sizing for 1280px height with variable width
+            this.updateChefScale(texture);
+            this.chefState = state;
+            
         }, undefined, (error) => {
-            console.warn('Could not load chef.png, falling back to canvas master');
+            console.warn(`Could not load chef_${state}.png, falling back to canvas master`);
             this.createFallbackMaster();
         });
+    }
+
+    updateChefScale(texture) {
+        if (!this.sprites.master || !texture.image) return;
+        
+        const imageWidth = texture.image.width;
+        const imageHeight = texture.image.height;
+        
+        // Target height is fixed at 8 units (4 * 2x multiplier for full body)
+        const baseHeight = 4;
+        const sizeMultiplier = 2;
+        const targetHeight = baseHeight * sizeMultiplier;
+        
+        // Calculate width scale based on image aspect ratio
+        // Base calculation: if image was 1024x1024, scale would be 4x4
+        // Now: if image is 1280px height, maintain same visual height, adjust width proportionally
+        const aspectRatio = imageWidth / imageHeight;
+        const targetWidth = targetHeight * aspectRatio;
+        
+        this.sprites.master.scale.set(targetWidth, targetHeight, 1);
+    }
+
+    updateChefImage(newState) {
+        if (newState !== this.chefState) {
+            console.log(`Updating chef image from ${this.chefState} to ${newState}`);
+            this.loadChefImage(newState);
+        }
     }
     
     createFallbackMaster() {
@@ -202,8 +265,9 @@ class DinerScene {
         const texture = new THREE.CanvasTexture(canvas);
         const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
         this.sprites.master = new THREE.Sprite(material);
-        this.sprites.master.position.set(0, 1, 0);
-        this.sprites.master.scale.set(4, 4, 1);
+        // Position chef at Y: -1 and behind counter (z = -2)
+        this.sprites.master.position.set(0, -1, -2);
+        this.sprites.master.scale.set(8, 8, 1); // Increased by 2x from 4,4
         this.scene.add(this.sprites.master);
     }
     
@@ -623,6 +687,9 @@ class DinerScene {
         
         // Create user status box sprites for each seat
         this.createUserStatusSprites();
+        
+        // Create chef speech bubble sprite
+        this.createChefSpeechBubble();
     }
     
     createMasterStatusSprite() {
@@ -668,16 +735,32 @@ class DinerScene {
             const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
             const statusSprite = new THREE.Sprite(material);
             
-            // Position above each seat
+            // Position above each seat with increased spacing from food image
             const seat = this.seats[i];
             if (seat) {
-                statusSprite.position.set(seat.position.x, seat.position.y + 2, 3);
+                statusSprite.position.set(seat.position.x, seat.position.y + 2.8, 3);
                 statusSprite.scale.set(2.5, 1, 1);
             }
             statusSprite.visible = false; // Initially hidden
             
             this.sprites.userStatusBoxes.push(statusSprite);
             this.scene.add(statusSprite);
+            
+            // Create separate image display sprite
+            const imageCanvas = this.createUserImageCanvas('');
+            const imageTexture = new THREE.CanvasTexture(imageCanvas);
+            const imageMaterial = new THREE.SpriteMaterial({ map: imageTexture, transparent: true });
+            const imageSprite = new THREE.Sprite(imageMaterial);
+            
+            // Position image box with increased spacing from user
+            if (seat) {
+                imageSprite.position.set(seat.position.x, seat.position.y + 2.0, 3);
+                imageSprite.scale.set(1.2, 1.2, 1);
+            }
+            imageSprite.visible = false; // Initially hidden
+            
+            this.sprites.userImageBoxes.push(imageSprite);
+            this.scene.add(imageSprite);
         }
     }
     
@@ -715,6 +798,109 @@ class DinerScene {
         });
         
         return canvas;
+    }
+    
+    createUserImageCanvas(imageData, callback) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        
+        if (!imageData) {
+            // Empty transparent canvas for hidden state
+            if (callback) callback(canvas);
+            return canvas;
+        }
+        
+        // Create a promise-based image loading for base64 data
+        const img = new Image();
+        img.onload = () => {
+            // Clear canvas for complete transparency
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the food image directly with no background or border
+            // Use full canvas size for the image
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            if (callback) callback(canvas);
+        };
+        
+        img.onerror = () => {
+            console.warn('Failed to load food image');
+            // For transparent design, just leave canvas empty on error
+            // The image sprite will remain hidden if no image loads
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (callback) callback(canvas);
+        };
+        
+        // Set image source (base64 data)
+        if (imageData.startsWith('data:image/')) {
+            img.src = imageData;
+        } else {
+            // Assume base64 encoded PNG
+            img.src = 'data:image/png;base64,' + imageData;
+        }
+        
+        return canvas;
+    }
+    
+    createCombinedImageCanvas(consumablesWithImages, callback) {
+        const imageSize = 128;
+        const spacing = 8; // Small gap between images
+        const totalWidth = (imageSize * consumablesWithImages.length) + (spacing * (consumablesWithImages.length - 1));
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = totalWidth;
+        canvas.height = imageSize;
+        const ctx = canvas.getContext('2d');
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        let loadedImages = 0;
+        const totalImages = consumablesWithImages.length;
+        
+        // Load all images and draw them side by side
+        consumablesWithImages.forEach((consumable, index) => {
+            const img = new Image();
+            img.onload = () => {
+                // Calculate position for this image
+                const x = index * (imageSize + spacing);
+                
+                // Draw the image
+                ctx.drawImage(img, x, 0, imageSize, imageSize);
+                
+                loadedImages++;
+                if (loadedImages === totalImages) {
+                    // All images loaded, callback with completed canvas
+                    if (callback) callback(canvas);
+                }
+            };
+            
+            img.onerror = () => {
+                console.warn(`Failed to load food image for ${consumable.itemName}`);
+                loadedImages++;
+                if (loadedImages === totalImages) {
+                    // All images processed (including errors), callback with canvas
+                    if (callback) callback(canvas);
+                }
+            };
+            
+            // Set image source
+            if (consumable.imageData.startsWith('data:image/')) {
+                img.src = consumable.imageData;
+            } else {
+                img.src = 'data:image/png;base64,' + consumable.imageData;
+            }
+        });
+    }
+    
+    hideUserImageSprite(seatId) {
+        const seatIndex = seatId - 1;
+        if (seatIndex >= 0 && seatIndex < this.sprites.userImageBoxes.length) {
+            this.sprites.userImageBoxes[seatIndex].visible = false;
+        }
     }
     
     updateMasterStatusSprite(status, displayName) {
@@ -786,12 +972,55 @@ class DinerScene {
         }
         
         statusSprite.visible = true;
+        
+        // Update image display if any consumable has image data
+        this.updateUserImageSprite(seatId, uniqueConsumables);
+    }
+    
+    updateUserImageSprite(seatId, consumables) {
+        const seatIndex = seatId - 1;
+        if (seatIndex < 0 || seatIndex >= this.sprites.userImageBoxes.length) return;
+        
+        // Find all consumables with image data
+        const consumablesWithImages = consumables.filter(c => c.imageData && c.imageData.trim());
+        
+        if (consumablesWithImages.length === 0) {
+            this.hideUserImageSprite(seatId);
+            return;
+        }
+        
+        console.log(`Updating image sprite for seat ${seatId} with ${consumablesWithImages.length} food images`);
+        
+        // Create a combined canvas with all images side by side
+        this.createCombinedImageCanvas(consumablesWithImages, (canvas) => {
+            const imageSprite = this.sprites.userImageBoxes[seatIndex];
+            if (imageSprite) {
+                const texture = new THREE.CanvasTexture(canvas);
+                imageSprite.material.map = texture;
+                imageSprite.material.needsUpdate = true;
+                imageSprite.visible = true;
+                
+                // Adjust scale to keep images reasonably sized and centered
+                const baseScale = 1.2;
+                const maxWidth = 2.5; // Maximum width to prevent overlap with other seats
+                
+                // Calculate appropriate scale to fit within max width
+                const naturalWidth = baseScale * consumablesWithImages.length;
+                const finalScale = naturalWidth > maxWidth ? maxWidth / consumablesWithImages.length : baseScale;
+                
+                imageSprite.scale.set(finalScale * consumablesWithImages.length, finalScale, 1);
+            }
+        });
     }
     
     hideUserStatusSprite(seatId) {
         const seatIndex = seatId - 1;
         if (seatIndex >= 0 && seatIndex < this.sprites.userStatusBoxes.length) {
             this.sprites.userStatusBoxes[seatIndex].visible = false;
+        }
+        // Also hide image sprite
+        if (seatIndex >= 0 && seatIndex < this.sprites.userImageBoxes.length) {
+            this.sprites.userImageBoxes[seatIndex].visible = false;
         }
     }
     
@@ -805,6 +1034,10 @@ class DinerScene {
         // Hide all user status sprites (used when user changes seats)
         for (let i = 0; i < this.sprites.userStatusBoxes.length; i++) {
             this.sprites.userStatusBoxes[i].visible = false;
+        }
+        // Also hide all image sprites
+        for (let i = 0; i < this.sprites.userImageBoxes.length; i++) {
+            this.sprites.userImageBoxes[i].visible = false;
         }
     }
     
@@ -886,7 +1119,465 @@ class DinerScene {
         return result;
     }
 
+    createChefSpeechBubble() {
+        // Create initial empty canvas for speech bubble
+        const canvas = this.createSpeechBubbleCanvas('');
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        this.sprites.chefSpeechBubble = new THREE.Sprite(material);
+        
+        // Position to the right side of the chef
+        this.sprites.chefSpeechBubble.position.set(3, 1, -1.9);
+        this.sprites.chefSpeechBubble.scale.set(4, 2, 1);
+        this.sprites.chefSpeechBubble.visible = false; // Initially hidden
+        this.scene.add(this.sprites.chefSpeechBubble);
+    }
+
+    createSpeechBubbleCanvas(text) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 400;
+        canvas.height = 180;
+        const ctx = canvas.getContext('2d');
+        
+        if (!text) {
+            // Empty canvas for hidden state
+            return canvas;
+        }
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Speech bubble background
+        const bubbleX = 10;
+        const bubbleY = 10;
+        const bubbleWidth = canvas.width - 20;
+        const bubbleHeight = canvas.height - 30;
+        
+        // Main bubble
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 3;
+        this.drawRoundedRect(ctx, bubbleX, bubbleY, bubbleWidth, bubbleHeight, 15);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Speech pointer (triangle pointing left toward chef)
+        const pointerX = bubbleX;
+        const pointerY = bubbleY + bubbleHeight / 2;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.beginPath();
+        ctx.moveTo(pointerX, pointerY - 15);
+        ctx.lineTo(pointerX, pointerY + 15);
+        ctx.lineTo(pointerX - 15, pointerY);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Pointer border
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        // Text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 15px Trebuchet MS';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        
+        // Split text into sentences for line-by-line display
+        const sentences = text.split(/([.!?])/);
+        const completeSentences = [];
+        
+        // Rebuild sentences (combine text with punctuation)
+        for (let i = 0; i < sentences.length; i += 2) {
+            if (sentences[i] && sentences[i].trim()) {
+                const sentence = sentences[i].trim() + (sentences[i + 1] || '');
+                if (sentence.length > 0) {
+                    completeSentences.push(sentence);
+                }
+            }
+        }
+        
+        // Limit to 2 sentences max
+        const displaySentences = completeSentences.slice(-2);
+        
+        // Word wrap each sentence and create final display lines
+        const maxWidth = bubbleWidth - 40; // Leave padding
+        const wrappedLines = [];
+        
+        displaySentences.forEach(sentence => {
+            const words = sentence.split(' ');
+            let currentLine = '';
+            
+            words.forEach(word => {
+                const testLine = currentLine ? currentLine + ' ' + word : word;
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && currentLine) {
+                    // Current line is full, start new line
+                    wrappedLines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = testLine;
+                }
+            });
+            
+            // Add the last line of this sentence
+            if (currentLine) {
+                wrappedLines.push(currentLine);
+            }
+        });
+        
+        // Draw text lines with left alignment
+        const lineHeight = 24;
+        const textStartX = bubbleX + 20; // Left padding
+        const textStartY = bubbleY + 20; // Top padding
+        
+        wrappedLines.forEach((line, index) => {
+            ctx.fillText(line, textStartX, textStartY + index * lineHeight);
+        });
+        
+        return canvas;
+    }
+
+    showChefSpeechBubble(message) {
+        // Clear any existing animation
+        this.hideChefSpeechBubble();
+        
+        // Split message into sentences
+        const sentenceParts = message.split(/([.!?])/);
+        const sentences = [];
+        
+        for (let i = 0; i < sentenceParts.length; i += 2) {
+            if (sentenceParts[i] && sentenceParts[i].trim()) {
+                const sentence = sentenceParts[i].trim() + (sentenceParts[i + 1] || '');
+                if (sentence.length > 0) {
+                    sentences.push(sentence);
+                }
+            }
+        }
+        
+        // Initialize animation state
+        this.speechBubble.currentMessage = message;
+        this.speechBubble.sentences = sentences;
+        this.speechBubble.currentSentenceIndex = 0;
+        this.speechBubble.currentWordInSentence = 0;
+        this.speechBubble.displayedSentences = [];
+        this.speechBubble.isAnimating = true;
+        
+        // Start sentence-by-sentence animation
+        this.animateNextSentence();
+    }
+
+    animateNextSentence() {
+        if (!this.speechBubble.isAnimating || 
+            this.speechBubble.currentSentenceIndex >= this.speechBubble.sentences.length) {
+            // Animation complete - hold for a shorter time then hide
+            setTimeout(() => {
+                this.hideChefSpeechBubble();
+            }, 2000);
+            return;
+        }
+        
+        // Start animating current sentence word by word
+        this.speechBubble.currentWordInSentence = 0;
+        this.animateWordsInCurrentSentence();
+    }
+
+    animateWordsInCurrentSentence() {
+        const currentSentence = this.speechBubble.sentences[this.speechBubble.currentSentenceIndex];
+        if (!currentSentence) return;
+        
+        const words = currentSentence.split(' ');
+        
+        if (this.speechBubble.currentWordInSentence >= words.length) {
+            // Current sentence complete - add to displayed sentences
+            this.speechBubble.displayedSentences.push(currentSentence);
+            
+            // Keep only last 2 sentences
+            if (this.speechBubble.displayedSentences.length > 2) {
+                this.speechBubble.displayedSentences.shift();
+            }
+            
+            // Move to next sentence after pause
+            this.speechBubble.currentSentenceIndex++;
+            this.speechBubble.animationTimer = setTimeout(() => {
+                this.animateNextSentence();
+            }, 900); // Pause between sentences
+            return;
+        }
+        
+        // Build current sentence progress
+        const currentWords = words.slice(0, this.speechBubble.currentWordInSentence + 1);
+        const currentSentenceProgress = currentWords.join(' ');
+        
+        // Combine with previous completed sentences
+        const allSentences = [...this.speechBubble.displayedSentences, currentSentenceProgress];
+        const displayText = allSentences.join(' ');
+        
+        // Update speech bubble
+        const canvas = this.createSpeechBubbleCanvas(displayText);
+        if (this.sprites.chefSpeechBubble) {
+            this.sprites.chefSpeechBubble.material.map = new THREE.CanvasTexture(canvas);
+            this.sprites.chefSpeechBubble.material.needsUpdate = true;
+            this.sprites.chefSpeechBubble.visible = true;
+        }
+        
+        // Move to next word
+        this.speechBubble.currentWordInSentence++;
+        
+        // Calculate delay for next word
+        const currentWord = words[this.speechBubble.currentWordInSentence - 1] || '';
+        let delay = 140; // Fast word display
+        
+        if (currentWord.includes(',') || currentWord.includes(';')) {
+            delay = 400; // Medium pause for commas
+        }
+        
+        // Schedule next word
+        this.speechBubble.animationTimer = setTimeout(() => {
+            this.animateWordsInCurrentSentence();
+        }, delay);
+    }
+
+    hideChefSpeechBubble() {
+        // Clear any ongoing animation
+        if (this.speechBubble.animationTimer) {
+            clearTimeout(this.speechBubble.animationTimer);
+            this.speechBubble.animationTimer = null;
+        }
+        
+        // Reset animation state
+        this.speechBubble.isAnimating = false;
+        this.speechBubble.currentMessage = '';
+        this.speechBubble.sentences = [];
+        this.speechBubble.currentSentenceIndex = 0;
+        this.speechBubble.currentWordInSentence = 0;
+        this.speechBubble.displayedSentences = [];
+        
+        // Hide sprite
+        if (this.sprites.chefSpeechBubble) {
+            this.sprites.chefSpeechBubble.visible = false;
+        }
+    }
+
     getSeatStates() {
         return this.seatStates;
+    }
+
+    createTVDisplaySprite() {
+        // Create initial empty canvas for TV display
+        const canvas = this.createTVCanvas('');
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        this.sprites.tvDisplay = new THREE.Sprite(material);
+        
+        // Position TV prominently above the scene (center-top)
+        this.sprites.tvDisplay.position.set(0, 2, -1);
+        this.sprites.tvDisplay.scale.set(6, 4, 1); // Large and prominent
+        this.sprites.tvDisplay.visible = false; // Initially hidden
+        this.scene.add(this.sprites.tvDisplay);
+        
+        console.log('📺 TV display sprite created and positioned');
+    }
+
+    createTVCanvas(videoSession, status = 'off') {
+        const canvas = document.createElement('canvas');
+        canvas.width = 480;
+        canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (status === 'off' || !videoSession) {
+            // TV is off - show black screen with subtle border
+            this.drawTVFrame(ctx, canvas.width, canvas.height);
+            this.drawTVScreen(ctx, canvas.width, canvas.height, '#000000', 'TV');
+            return canvas;
+        }
+        
+        // TV is on - show video information
+        this.drawTVFrame(ctx, canvas.width, canvas.height);
+        this.drawTVScreen(ctx, canvas.width, canvas.height, '#1a1a2e', videoSession.videoTitle || 'Playing Video');
+        
+        return canvas;
+    }
+
+    drawTVFrame(ctx, width, height) {
+        // TV outer frame (wood/plastic)
+        ctx.fillStyle = '#4a3c28';
+        ctx.fillRect(0, 0, width, height);
+        
+        // TV frame highlight
+        ctx.fillStyle = '#6b5b47';
+        ctx.fillRect(5, 5, width - 10, height - 10);
+        
+        // Screen bezel
+        ctx.fillStyle = '#2a2a2a';
+        ctx.fillRect(15, 15, width - 30, height - 30);
+    }
+
+    drawTVScreen(ctx, width, height, backgroundColor, text) {
+        const screenX = 25;
+        const screenY = 25;
+        const screenWidth = width - 50;
+        const screenHeight = height - 50;
+        
+        // Screen background
+        ctx.fillStyle = backgroundColor;
+        ctx.fillRect(screenX, screenY, screenWidth, screenHeight);
+        
+        if (backgroundColor === '#000000') {
+            // TV is off - minimal reflection
+            const gradient = ctx.createLinearGradient(screenX, screenY, screenX + screenWidth, screenY + screenHeight);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0.02)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(screenX, screenY, screenWidth, screenHeight);
+            
+            // Small power indicator
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath();
+            ctx.arc(width - 35, height - 35, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+        } else {
+            // TV is on - show content
+            
+            // Video playing indicator
+            ctx.fillStyle = '#00ff00';
+            ctx.beginPath();
+            ctx.arc(screenX + 15, screenY + 15, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Title text
+            if (text && text !== 'Playing Video') {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Word wrap for long titles
+                const maxWidth = screenWidth - 40;
+                const words = text.split(' ');
+                const lines = [];
+                let currentLine = '';
+                
+                for (const word of words) {
+                    const testLine = currentLine ? currentLine + ' ' + word : word;
+                    const metrics = ctx.measureText(testLine);
+                    
+                    if (metrics.width > maxWidth && currentLine) {
+                        lines.push(currentLine);
+                        currentLine = word;
+                    } else {
+                        currentLine = testLine;
+                    }
+                }
+                if (currentLine) lines.push(currentLine);
+                
+                // Draw lines
+                const lineHeight = 20;
+                const startY = screenY + screenHeight/2 - (lines.length * lineHeight)/2;
+                
+                lines.forEach((line, index) => {
+                    ctx.fillText(line, screenX + screenWidth/2, startY + index * lineHeight);
+                });
+            }
+            
+            // Video player simulation - simple waveform or bars
+            this.drawVideoVisualization(ctx, screenX, screenY, screenWidth, screenHeight);
+        }
+    }
+
+    drawVideoVisualization(ctx, x, y, width, height) {
+        // Simple visualization - audio bars or similar
+        const barCount = 20;
+        const barWidth = (width - 60) / barCount;
+        const baseY = y + height - 40;
+        
+        ctx.fillStyle = '#4CAF50';
+        
+        for (let i = 0; i < barCount; i++) {
+            // Random height for animation effect (in real implementation, this would be based on audio data)
+            const barHeight = Math.random() * 30 + 5;
+            const barX = x + 30 + i * barWidth;
+            
+            ctx.fillRect(barX, baseY - barHeight, barWidth - 2, barHeight);
+        }
+        
+        // YouTube-style play button in center
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.beginPath();
+        const centerX = x + width/2;
+        const centerY = y + height/2 - 20;
+        const size = 25;
+        
+        ctx.moveTo(centerX - size/2, centerY - size/2);
+        ctx.lineTo(centerX + size/2, centerY);
+        ctx.lineTo(centerX - size/2, centerY + size/2);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    updateTVSprite(videoSession) {
+        if (!this.sprites.tvDisplay) {
+            console.warn('📺 TV sprite not created yet');
+            return;
+        }
+        
+        console.log('📺 Updating TV sprite for video:', videoSession.videoTitle);
+        
+        // Create updated canvas
+        const canvas = this.createTVCanvas(videoSession, 'on');
+        const texture = new THREE.CanvasTexture(canvas);
+        
+        // Update sprite material
+        this.sprites.tvDisplay.material.map = texture;
+        this.sprites.tvDisplay.material.needsUpdate = true;
+        this.sprites.tvDisplay.visible = true;
+        
+        // Add a subtle glow effect by adjusting emissive color
+        this.sprites.tvDisplay.material.color = new THREE.Color(1.1, 1.1, 1.1);
+    }
+
+    hideTVSprite() {
+        if (this.sprites.tvDisplay) {
+            // Show TV as off before hiding
+            const canvas = this.createTVCanvas('', 'off');
+            const texture = new THREE.CanvasTexture(canvas);
+            this.sprites.tvDisplay.material.map = texture;
+            this.sprites.tvDisplay.material.needsUpdate = true;
+            
+            // Keep visible for a moment to show "TV off" state
+            setTimeout(() => {
+                if (this.sprites.tvDisplay) {
+                    this.sprites.tvDisplay.visible = false;
+                }
+            }, 1000);
+            
+            // Reset color
+            this.sprites.tvDisplay.material.color = new THREE.Color(1, 1, 1);
+            
+            console.log('📺 TV sprite hidden');
+        }
+    }
+
+    // Test function for TV sprite
+    testTVSprite() {
+        console.log('🧪 Testing TV sprite');
+        
+        const testVideoSession = {
+            videoTitle: 'Test Video - YouTube Video Sharing',
+            videoId: 'test123',
+            isPlaying: true
+        };
+        
+        this.updateTVSprite(testVideoSession);
+        
+        // Hide after 5 seconds
+        setTimeout(() => {
+            this.hideTVSprite();
+        }, 5000);
     }
 }

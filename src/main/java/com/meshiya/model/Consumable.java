@@ -15,6 +15,7 @@ public class Consumable {
     private String roomId;
     private Integer seatId;
     private String userId;
+    private String imageData; // Base64 encoded image data for generated food images
     
     // Default constructor
     public Consumable() {}
@@ -104,6 +105,14 @@ public class Consumable {
     
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+    
+    public String getImageData() {
+        return imageData;
+    }
+    
+    public void setImageData(String imageData) {
+        this.imageData = imageData;
     }
     
     /**

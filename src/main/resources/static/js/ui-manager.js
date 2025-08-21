@@ -437,6 +437,11 @@ class UIManager {
         `;
         
         this.appendMessage(messageEl, timestamp);
+        
+        // Also trigger chef speech bubble animation
+        if (window.meshiya && window.meshiya.dinerScene) {
+            window.meshiya.dinerScene.showChefSpeechBubble(content);
+        }
     }
 
     appendMessage(messageEl, timestamp) {
@@ -576,7 +581,41 @@ class UIManager {
             // Also update the Three.js sprite
             if (window.meshiya && window.meshiya.dinerScene) {
                 window.meshiya.dinerScene.updateMasterStatusSprite(message.status, message.displayName);
+                
+                // Update chef image based on status
+                const chefState = this.getChefStateFromStatus(message.status);
+                window.meshiya.dinerScene.updateChefImage(chefState);
             }
+        }
+    }
+
+    getChefStateFromStatus(status) {
+        // Map master status to chef image states
+        switch (status?.toLowerCase()) {
+            case 'thinking':
+                return 'thinking';
+            case 'preparing_order':
+            case 'preparing order':
+            case 'busy':
+            case 'serving':
+                return 'prepare';
+            case 'idle':
+            case 'conversing':
+            case 'cleaning':
+            default:
+                return 'normal';
+        }
+    }
+
+    handleOrderNotification(message) {
+        console.log('UI Manager handling order notification:', message);
+        
+        if (message.type === 'FOOD_SERVED') {
+            // Show notification that order is ready
+            this.addSystemMessage(`🍽️ Your ${message.content} is ready!`);
+            
+            // Play a notification sound if available
+            this.playNotificationSound();
         }
     }
 
@@ -595,6 +634,27 @@ class UIManager {
         
         // Update text
         this.elements.masterStatusText.textContent = displayName || status.replace('_', ' ');
+    }
+
+    playNotificationSound() {
+        try {
+            // Create a simple notification beep
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.3);
+        } catch (error) {
+            console.log('Could not play notification sound:', error);
+        }
     }
 
     // Public methods for external access

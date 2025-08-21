@@ -50,9 +50,9 @@ public class ConsumableService {
     }
     
     /**
-     * Add consumable when order is served
+     * Add consumable when order is served (with optional image data)
      */
-    public void addConsumable(String userId, String roomId, Integer seatId, MenuItem menuItem) {
+    public void addConsumableWithImage(String userId, String roomId, Integer seatId, MenuItem menuItem, String imageData) {
         // Validate parameters
         if (seatId == null || userId == null || roomId == null || menuItem == null) {
             logger.warn("Invalid parameters for adding consumable: userId={}, roomId={}, seatId={}, menuItem={}", 
@@ -63,9 +63,9 @@ public class ConsumableService {
         // Verify user is actually in the seat using centralized manager
         SeatService.UserInfo userInSeat = seatService.getUserInSeat(roomId, seatId);
         if (userInSeat == null || !userId.equals(userInSeat.getUserId())) {
-            logger.warn("User {} not found in seat {} of room {}, cannot add consumable for {}", 
+            logger.warn("User {} not found in seat {} of room {} during seat validation, but order exists so proceeding with consumable for {}", 
                        userId, seatId, roomId, menuItem.getName());
-            return;
+            // Don't return - continue with adding the consumable since the order was valid
         }
         
         // Use consumption duration from menu item configuration
@@ -80,6 +80,12 @@ public class ConsumableService {
             seatId,
             userId
         );
+        
+        // Add image data if available
+        if (imageData != null && !imageData.trim().isEmpty()) {
+            consumable.setImageData(imageData);
+            logger.info("Added image data to consumable for {}", menuItem.getName());
+        }
         
         String key = String.format(CONSUMABLES_KEY_PATTERN, roomId, userId);
         
@@ -101,6 +107,13 @@ public class ConsumableService {
         } catch (JsonProcessingException e) {
             logger.error("Error adding consumable", e);
         }
+    }
+    
+    /**
+     * Add consumable when order is served (without image - backward compatibility)
+     */
+    public void addConsumable(String userId, String roomId, Integer seatId, MenuItem menuItem) {
+        addConsumableWithImage(userId, roomId, seatId, menuItem, null);
     }
     
     /**
