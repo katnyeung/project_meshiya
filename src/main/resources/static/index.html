@@ -51,6 +51,35 @@
                 <div id="connection-status">Connecting...</div>
             </div>
             
+            <!-- Video display - separate from status -->
+            <div id="video-display" class="panel tv-container hidden">
+                <div class="tv-frame">
+                    <div class="tv-screen">
+                        <div id="video-content">
+                            <div id="video-title">No video playing</div>
+                            <div id="video-initiator">Played by: Nobody</div>
+                            <div id="video-progress">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: 0%"></div>
+                                </div>
+                                <div id="video-time">00:00 / 00:00</div>
+                            </div>
+                            <div id="video-controls">
+                                <div class="volume-control">
+                                    <label for="video-volume">Volume:</label>
+                                    <input type="range" id="video-volume" min="0" max="100" value="50" class="volume-slider">
+                                    <span id="volume-display">50%</span>
+                                </div>
+                                <div class="control-buttons">
+                                    <button id="video-stop-btn" class="video-btn">Stop</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tv-power-indicator"></div>
+                </div>
+            </div>
+            
             <!-- Master status label now handled by Three.js sprite -->
         </div>
     </div>
@@ -66,6 +95,7 @@
     <script src="js/diner-scene.js"></script>
     <script src="js/ui-manager.js"></script>
     <script src="js/user-status-manager.js"></script>
+    <script src="js/video-display-manager.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>

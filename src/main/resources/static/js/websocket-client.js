@@ -103,6 +103,9 @@ class WebSocketClient {
             this.handleOrderNotification(JSON.parse(messageOutput.body));
         });
         
+        // NOTE: TV/Video messages are now handled via room broadcasts (/topic/room/room1/video)
+        // No need for personal video queue subscription since TV is a shared room experience
+        
         // Join Room1
         this.stompClient.send("/app/room.join", {}, JSON.stringify({
             userId: this.userId,

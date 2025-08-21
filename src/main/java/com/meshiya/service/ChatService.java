@@ -26,10 +26,20 @@ public class ChatService {
     
     @Autowired
     private RedisService redisService;
+    
+    @Autowired
+    private RoomTVService roomTVService;
 
     public ChatMessage processMessage(ChatMessage message) {
         if (message.getType() == MessageType.CHAT_MESSAGE) {
             logger.info("Processing chat message from {}: {}", message.getUserName(), message.getContent());
+            
+            // Check for TV command
+            String content = message.getContent();
+            if (content != null && content.trim().startsWith("/play ")) {
+                logger.info("Processing TV play command from {}: {}", message.getUserName(), content);
+                return roomTVService.processPlayCommand(message);
+            }
             
             // Store the message in Redis
             redisService.addMessage(message);

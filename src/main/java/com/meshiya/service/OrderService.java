@@ -49,6 +49,9 @@ public class OrderService {
     @Autowired
     private ImageGenerationService imageGenerationService;
     
+    @Autowired
+    private UserService userService;
+    
     // Order queue management
     private final Queue<Order> orderQueue = new ConcurrentLinkedQueue<>();
     private final Map<String, Order> activeOrders = new ConcurrentHashMap<>();
@@ -109,6 +112,9 @@ public class OrderService {
         
         // Persist user orders to Redis
         persistUserOrders(userId);
+        
+        // Update user activity timestamp for cleanup tracking
+        userService.updateUserActivity(userId, userName, roomId);
         
         notifyStatusChange(order, OrderStatus.ORDERED);
         
@@ -172,6 +178,9 @@ public class OrderService {
                     
                     // Persist user orders to Redis
                     persistUserOrders(userId);
+                    
+                    // Update user activity timestamp for cleanup tracking
+                    userService.updateUserActivity(userId, userName, roomId);
                     
                     notifyStatusChange(order, OrderStatus.ORDERED);
                     

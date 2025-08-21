@@ -42,7 +42,7 @@ public class UserService {
     private RoomService roomService;
     
     @Autowired
-    private OrderService orderService;
+    private SeatService seatService;
     
     private final ObjectMapper objectMapper;
     
@@ -58,6 +58,11 @@ public class UserService {
         UserProfile profile = getUserProfile(userId);
         
         if (profile == null) {
+            // Log who's creating profiles for unknown users
+            if ("Unknown".equals(userName)) {
+                logger.warn("Creating profile for Unknown user {} - called from: {}", 
+                           userId, getCallLocation());
+            }
             profile = new UserProfile(userId, userName, roomId);
             logger.info("Created user profile for {} ({})", userName, userId);
         } else {
@@ -69,6 +74,18 @@ public class UserService {
         
         saveUserProfile(profile);
         logger.debug("Updated activity for user {} in room {}", userName, roomId);
+    }
+    
+    /**
+     * Get the location where this method was called from (for debugging)
+     */
+    private String getCallLocation() {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        if (stack.length > 3) {
+            StackTraceElement caller = stack[3]; // Skip getStackTrace, getCallLocation, updateUserActivity
+            return caller.getClassName() + "::" + caller.getMethodName() + "(" + caller.getLineNumber() + ")";
+        }
+        return "unknown";
     }
     
     /**
@@ -94,7 +111,8 @@ public class UserService {
         if (profile != null) {
             Integer previousSeat = profile.getCurrentSeat();
             profile.setCurrentSeat(null);
-            profile.updateActivity();
+            // NOTE: Don't call updateActivity() here - this prevents proper cleanup 
+            // of inactive users during timeout processing
             saveUserProfile(profile);
             logger.info("Removed seat {} for user {} ({})", previousSeat, profile.getUserName(), userId);
         }
@@ -106,6 +124,18 @@ public class UserService {
     public Integer getUserSeat(String userId) {
         UserProfile profile = getUserProfile(userId);
         return profile != null ? profile.getCurrentSeat() : null;
+    }
+    
+    /**
+     * Mark user as inactive (for disconnection/timeout handling)
+     */
+    public void markUserInactive(String userId) {
+        UserProfile profile = getUserProfile(userId);
+        if (profile != null) {
+            profile.markInactive();
+            saveUserProfile(profile);
+            logger.info("Marked user {} ({}) as inactive", profile.getUserName(), userId);
+        }
     }
     
     /**
@@ -158,32 +188,48 @@ public class UserService {
     
     /**
      * Scheduled task to clean up inactive users - runs every 2 minutes
+     * Simple: Remove users from room after timeout, regardless of seat status
      */
     @Scheduled(fixedRate = 120000) // 2 minutes
     public void cleanupInactiveUsers() {
-        logger.debug("Running inactive user cleanup task");
+        logger.info("Running inactive user cleanup task");
         
         Set<String> profileKeys = redisTemplate.keys(USER_PROFILE_KEY_PREFIX + "*");
         if (profileKeys == null || profileKeys.isEmpty()) {
+            logger.info("No user profiles found for cleanup");
             return;
         }
         
         LocalDateTime cutoff = LocalDateTime.now().minus(inactiveTimeoutMinutes, ChronoUnit.MINUTES);
         int removedCount = 0;
+        int checkedCount = 0;
+        
+        logger.info("Checking {} user profiles for cleanup (cutoff: {})", profileKeys.size(), cutoff);
         
         for (String key : profileKeys) {
             String userId = key.substring(USER_PROFILE_KEY_PREFIX.length());
+            checkedCount++;
             
             try {
                 UserProfile profile = getUserProfile(userId);
                 if (profile == null) {
+                    logger.debug("Profile {} is null, skipping", userId);
                     continue;
                 }
                 
-                // If user is inactive, remove them
+                logger.debug("User {}: lastActivity={}, active={}, cutoff check={}", 
+                           profile.getUserName(), profile.getLastActivity(), profile.isActive(), 
+                           profile.getLastActivity().isBefore(cutoff));
+                
+                // Simple check: if last activity is old, remove user from room
                 if (profile.getLastActivity().isBefore(cutoff)) {
-                    removeInactiveUser(profile);
+                    logger.info("Removing inactive user {}: last activity {} is before cutoff {}", 
+                               profile.getUserName(), profile.getLastActivity(), cutoff);
+                    removeUserFromRoom(profile);
                     removedCount++;
+                } else {
+                    logger.debug("User {} is still active (last activity: {})", 
+                               profile.getUserName(), profile.getLastActivity());
                 }
                 
             } catch (Exception e) {
@@ -193,50 +239,46 @@ public class UserService {
             }
         }
         
-        if (removedCount > 0) {
-            logger.info("Cleaned up {} inactive users", removedCount);
-        }
+        logger.info("Cleanup complete: checked {} profiles, removed {} inactive users", checkedCount, removedCount);
+        
+        // Also clean up ghost seat assignments without user profiles
+        cleanupGhostSeatAssignments();
     }
     
     /**
-     * Remove an inactive user from the system
+     * Simple: Remove user from room (seat, orders, profile) due to inactivity
      */
-    private void removeInactiveUser(UserProfile profile) {
-        logger.info("Removing inactive user {} ({}) from room {} - last activity: {}", 
-                   profile.getUserName(), profile.getUserId(), profile.getRoomId(), profile.getLastActivity());
+    private void removeUserFromRoom(UserProfile profile) {
+        logger.info("Removing inactive user {} from room {} - last activity: {}", 
+                   profile.getUserName(), profile.getRoomId(), profile.getLastActivity());
         
-        // Remove user from their seat if they have one
-        if (profile.getRoomId() != null && profile.getCurrentSeat() != null) {
-            boolean seatRemoved = roomService.leaveSeat(profile.getRoomId(), profile.getUserId());
-            if (seatRemoved) {
-                // Add system message about user leaving due to inactivity
-                roomService.addMessageToRoom(profile.getRoomId(), createInactivityMessage(profile));
-            }
-        }
+        String userId = profile.getUserId();
+        String roomId = profile.getRoomId();
         
-        // Clean up any pending orders
-        cleanupUserOrders(profile);
-        
-        // Remove user profile from Redis
-        redisTemplate.delete(USER_PROFILE_KEY_PREFIX + profile.getUserId());
-    }
-    
-    /**
-     * Clean up orders for an inactive user
-     */
-    private void cleanupUserOrders(UserProfile profile) {
         try {
-            var userOrders = orderService.getUserCurrentOrders(profile.getUserId());
-            if (!userOrders.isEmpty()) {
-                logger.info("Cleaning up {} orders for inactive user {}", userOrders.size(), profile.getUserName());
-                for (var order : userOrders) {
-                    orderService.completeOrder(profile.getUserId(), order.getOrderId());
-                }
+            // Remove from seat if they have one (this also cleans consumables)
+            if (profile.getCurrentSeat() != null) {
+                roomService.leaveSeat(roomId, userId);
             }
+            
+            // Note: Orders will be cleaned up by OrderService's own scheduled cleanup
+            // when it detects the user profile no longer exists
+            
+            // Remove user profile from Redis
+            redisTemplate.delete(USER_PROFILE_KEY_PREFIX + userId);
+            
+            // Add system message
+            roomService.addMessageToRoom(roomId, createInactivityMessage(profile));
+            
+            logger.info("Successfully removed inactive user {} from room {}", profile.getUserName(), roomId);
+            
         } catch (Exception e) {
-            logger.error("Error cleaning up orders for {}: {}", profile.getUserId(), e.getMessage());
+            logger.error("Error removing user {} from room: {}", userId, e.getMessage());
+            // Still try to remove profile even if seat cleanup fails
+            redisTemplate.delete(USER_PROFILE_KEY_PREFIX + userId);
         }
     }
+    
     
     /**
      * Create a system message for user leaving due to inactivity
@@ -289,7 +331,60 @@ public class UserService {
     public void removeUser(String userId) {
         UserProfile profile = getUserProfile(userId);
         if (profile != null) {
-            removeInactiveUser(profile);
+            removeUserFromRoom(profile);
         }
+    }
+    
+    /**
+     * Clean up ghost seat assignments that don't have corresponding user profiles
+     */
+    private void cleanupGhostSeatAssignments() {
+        try {
+            SeatService.RoomMapping allRooms = seatService.getAllRooms();
+            int ghostCount = 0;
+            
+            for (SeatService.RoomInfo room : allRooms.getRooms().values()) {
+                List<String> ghostUserIds = new ArrayList<>();
+                
+                for (SeatService.UserInfo user : room.getSeats().values()) {
+                    // Check if user has a profile in UserService
+                    UserProfile profile = getUserProfile(user.getUserId());
+                    if (profile == null) {
+                        // Ghost user - has seat assignment but no profile
+                        logger.info("Found ghost user in seat: {} ({}) in room {} seat {}", 
+                                   user.getUserName(), user.getUserId(), user.getRoomId(), user.getSeatId());
+                        ghostUserIds.add(user.getUserId());
+                    }
+                }
+                
+                // Remove ghost users from seats
+                for (String ghostUserId : ghostUserIds) {
+                    logger.info("Removing ghost user {} from seat assignments", ghostUserId);
+                    seatService.leaveSeat(room.getRoomId(), ghostUserId);
+                    
+                    // Also remove from room seat occupancy
+                    roomService.leaveSeat(room.getRoomId(), ghostUserId);
+                    
+                    ghostCount++;
+                }
+            }
+            
+            if (ghostCount > 0) {
+                logger.info("Cleaned up {} ghost seat assignments", ghostCount);
+            } else {
+                logger.debug("No ghost seat assignments found");
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error during ghost seat assignment cleanup: {}", e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Force cleanup of inactive users (for admin/testing)
+     */
+    public void forceCleanupInactiveUsers() {
+        logger.info("Force cleanup of inactive users initiated");
+        cleanupInactiveUsers();
     }
 }

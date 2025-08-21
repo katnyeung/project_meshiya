@@ -124,6 +124,24 @@ public class DebugController {
     public Map<String, Object> getUserActivityStats() {
         return userService.getActivityStats();
     }
+    
+    @Operation(summary = "Force cleanup inactive users", description = "Manually trigger cleanup of inactive users from room")
+    @PostMapping("/users/cleanup")
+    public Map<String, Object> forceCleanupUsers() {
+        try {
+            userService.forceCleanupInactiveUsers();
+            return Map.of(
+                "success", true,
+                "message", "Inactive user cleanup completed - check logs for details"
+            );
+        } catch (Exception e) {
+            logger.error("Error during force cleanup: {}", e.getMessage(), e);
+            return Map.of(
+                "success", false,
+                "error", e.getMessage()
+            );
+        }
+    }
 
     @Operation(summary = "Get AI Master information", description = "Returns debug information about the AI Master's current state")
     @GetMapping("/master")
@@ -433,7 +451,7 @@ public class DebugController {
                 }
                 
                 return new DebugUserInfo(userId, "Unknown", "room1", userSeatId, 
-                                       System.currentTimeMillis(), orders, false);
+                                       0, orders, false); // Show 0 instead of current time for ghost users
             }
             
         } catch (Exception e) {

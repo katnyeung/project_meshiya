@@ -15,7 +15,8 @@ class DinerScene {
             userStatusBoxes: [],
             userImageBoxes: [], // Separate image display boxes
             masterStatusLabel: null,
-            chefSpeechBubble: null // Speech bubble above chef's head
+            chefSpeechBubble: null, // Speech bubble above chef's head
+            tvDisplay: null // TV sprite for video sharing
         };
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
@@ -1135,7 +1136,7 @@ class DinerScene {
     createSpeechBubbleCanvas(text) {
         const canvas = document.createElement('canvas');
         canvas.width = 400;
-        canvas.height = 150;
+        canvas.height = 180;
         const ctx = canvas.getContext('2d');
         
         if (!text) {
@@ -1361,5 +1362,222 @@ class DinerScene {
 
     getSeatStates() {
         return this.seatStates;
+    }
+
+    createTVDisplaySprite() {
+        // Create initial empty canvas for TV display
+        const canvas = this.createTVCanvas('');
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        this.sprites.tvDisplay = new THREE.Sprite(material);
+        
+        // Position TV prominently above the scene (center-top)
+        this.sprites.tvDisplay.position.set(0, 2, -1);
+        this.sprites.tvDisplay.scale.set(6, 4, 1); // Large and prominent
+        this.sprites.tvDisplay.visible = false; // Initially hidden
+        this.scene.add(this.sprites.tvDisplay);
+        
+        console.log('📺 TV display sprite created and positioned');
+    }
+
+    createTVCanvas(videoSession, status = 'off') {
+        const canvas = document.createElement('canvas');
+        canvas.width = 480;
+        canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (status === 'off' || !videoSession) {
+            // TV is off - show black screen with subtle border
+            this.drawTVFrame(ctx, canvas.width, canvas.height);
+            this.drawTVScreen(ctx, canvas.width, canvas.height, '#000000', 'TV');
+            return canvas;
+        }
+        
+        // TV is on - show video information
+        this.drawTVFrame(ctx, canvas.width, canvas.height);
+        this.drawTVScreen(ctx, canvas.width, canvas.height, '#1a1a2e', videoSession.videoTitle || 'Playing Video');
+        
+        return canvas;
+    }
+
+    drawTVFrame(ctx, width, height) {
+        // TV outer frame (wood/plastic)
+        ctx.fillStyle = '#4a3c28';
+        ctx.fillRect(0, 0, width, height);
+        
+        // TV frame highlight
+        ctx.fillStyle = '#6b5b47';
+        ctx.fillRect(5, 5, width - 10, height - 10);
+        
+        // Screen bezel
+        ctx.fillStyle = '#2a2a2a';
+        ctx.fillRect(15, 15, width - 30, height - 30);
+    }
+
+    drawTVScreen(ctx, width, height, backgroundColor, text) {
+        const screenX = 25;
+        const screenY = 25;
+        const screenWidth = width - 50;
+        const screenHeight = height - 50;
+        
+        // Screen background
+        ctx.fillStyle = backgroundColor;
+        ctx.fillRect(screenX, screenY, screenWidth, screenHeight);
+        
+        if (backgroundColor === '#000000') {
+            // TV is off - minimal reflection
+            const gradient = ctx.createLinearGradient(screenX, screenY, screenX + screenWidth, screenY + screenHeight);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0.02)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(screenX, screenY, screenWidth, screenHeight);
+            
+            // Small power indicator
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath();
+            ctx.arc(width - 35, height - 35, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+        } else {
+            // TV is on - show content
+            
+            // Video playing indicator
+            ctx.fillStyle = '#00ff00';
+            ctx.beginPath();
+            ctx.arc(screenX + 15, screenY + 15, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Title text
+            if (text && text !== 'Playing Video') {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Word wrap for long titles
+                const maxWidth = screenWidth - 40;
+                const words = text.split(' ');
+                const lines = [];
+                let currentLine = '';
+                
+                for (const word of words) {
+                    const testLine = currentLine ? currentLine + ' ' + word : word;
+                    const metrics = ctx.measureText(testLine);
+                    
+                    if (metrics.width > maxWidth && currentLine) {
+                        lines.push(currentLine);
+                        currentLine = word;
+                    } else {
+                        currentLine = testLine;
+                    }
+                }
+                if (currentLine) lines.push(currentLine);
+                
+                // Draw lines
+                const lineHeight = 20;
+                const startY = screenY + screenHeight/2 - (lines.length * lineHeight)/2;
+                
+                lines.forEach((line, index) => {
+                    ctx.fillText(line, screenX + screenWidth/2, startY + index * lineHeight);
+                });
+            }
+            
+            // Video player simulation - simple waveform or bars
+            this.drawVideoVisualization(ctx, screenX, screenY, screenWidth, screenHeight);
+        }
+    }
+
+    drawVideoVisualization(ctx, x, y, width, height) {
+        // Simple visualization - audio bars or similar
+        const barCount = 20;
+        const barWidth = (width - 60) / barCount;
+        const baseY = y + height - 40;
+        
+        ctx.fillStyle = '#4CAF50';
+        
+        for (let i = 0; i < barCount; i++) {
+            // Random height for animation effect (in real implementation, this would be based on audio data)
+            const barHeight = Math.random() * 30 + 5;
+            const barX = x + 30 + i * barWidth;
+            
+            ctx.fillRect(barX, baseY - barHeight, barWidth - 2, barHeight);
+        }
+        
+        // YouTube-style play button in center
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.beginPath();
+        const centerX = x + width/2;
+        const centerY = y + height/2 - 20;
+        const size = 25;
+        
+        ctx.moveTo(centerX - size/2, centerY - size/2);
+        ctx.lineTo(centerX + size/2, centerY);
+        ctx.lineTo(centerX - size/2, centerY + size/2);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    updateTVSprite(videoSession) {
+        if (!this.sprites.tvDisplay) {
+            console.warn('📺 TV sprite not created yet');
+            return;
+        }
+        
+        console.log('📺 Updating TV sprite for video:', videoSession.videoTitle);
+        
+        // Create updated canvas
+        const canvas = this.createTVCanvas(videoSession, 'on');
+        const texture = new THREE.CanvasTexture(canvas);
+        
+        // Update sprite material
+        this.sprites.tvDisplay.material.map = texture;
+        this.sprites.tvDisplay.material.needsUpdate = true;
+        this.sprites.tvDisplay.visible = true;
+        
+        // Add a subtle glow effect by adjusting emissive color
+        this.sprites.tvDisplay.material.color = new THREE.Color(1.1, 1.1, 1.1);
+    }
+
+    hideTVSprite() {
+        if (this.sprites.tvDisplay) {
+            // Show TV as off before hiding
+            const canvas = this.createTVCanvas('', 'off');
+            const texture = new THREE.CanvasTexture(canvas);
+            this.sprites.tvDisplay.material.map = texture;
+            this.sprites.tvDisplay.material.needsUpdate = true;
+            
+            // Keep visible for a moment to show "TV off" state
+            setTimeout(() => {
+                if (this.sprites.tvDisplay) {
+                    this.sprites.tvDisplay.visible = false;
+                }
+            }, 1000);
+            
+            // Reset color
+            this.sprites.tvDisplay.material.color = new THREE.Color(1, 1, 1);
+            
+            console.log('📺 TV sprite hidden');
+        }
+    }
+
+    // Test function for TV sprite
+    testTVSprite() {
+        console.log('🧪 Testing TV sprite');
+        
+        const testVideoSession = {
+            videoTitle: 'Test Video - YouTube Video Sharing',
+            videoId: 'test123',
+            isPlaying: true
+        };
+        
+        this.updateTVSprite(testVideoSession);
+        
+        // Hide after 5 seconds
+        setTimeout(() => {
+            this.hideTVSprite();
+        }, 5000);
     }
 }
