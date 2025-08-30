@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -23,6 +25,13 @@ public class SeatService {
     
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+    
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
+    
+    @Autowired
+    @Lazy
+    private UserService userService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -144,6 +153,9 @@ public class SeatService {
         
         saveRoomMapping(mapping);
         
+        // Broadcast seat occupancy update to frontend
+        broadcastSeatUpdate(roomId, room);
+        
         logger.info("User {} ({}) joined seat {} in room {}", userName, userId, seatId, roomId);
         return true;
     }
@@ -158,6 +170,13 @@ public class SeatService {
         
         if (removed) {
             saveRoomMapping(mapping);
+            
+            // Broadcast seat occupancy update to frontend
+            RoomInfo room = mapping.getRooms().get(roomId);
+            if (room != null) {
+                broadcastSeatUpdate(roomId, room);
+            }
+            
             logger.info("User {} left their seat in room {}", userId, roomId);
         }
         
@@ -396,5 +415,72 @@ public class SeatService {
         debug.put("totalRooms", mapping.getRooms().size());
         
         return debug;
+    }
+    
+    /**
+     * Broadcast seat occupancy update to all users in room
+     */
+    private void broadcastSeatUpdate(String roomId, RoomInfo room) {
+        try {
+            // Create enhanced seat occupancy with username information
+            Map<String, Object> enhancedOccupancy = new HashMap<>();
+            
+            for (Map.Entry<Integer, UserInfo> entry : room.getSeats().entrySet()) {
+                UserInfo userInfo = entry.getValue();
+                
+                // Get additional user profile information if available
+                String userName = userInfo.getUserName();
+                if (userService != null) {
+                    var profile = userService.getUserProfile(userInfo.getUserId());
+                    if (profile != null) {
+                        userName = profile.getUserName();
+                    }
+                }
+                
+                Map<String, Object> seatInfo = Map.of(
+                    "userId", userInfo.getUserId(),
+                    "userName", userName != null ? userName : "Unknown"
+                );
+                
+                enhancedOccupancy.put(entry.getKey().toString(), seatInfo);
+            }
+            
+            Map<String, Object> seatUpdate = Map.of(
+                "type", "SEAT_OCCUPANCY_UPDATE",
+                "roomId", roomId,
+                "occupancy", enhancedOccupancy
+            );
+            
+            messagingTemplate.convertAndSend("/topic/room/" + roomId + "/seats", seatUpdate);
+            logger.debug("Broadcasted seat update for room {}: {} occupied seats", roomId, enhancedOccupancy.size());
+            
+        } catch (Exception e) {
+            logger.error("Error broadcasting seat update for room {}: {}", roomId, e.getMessage());
+        }
+    }
+    
+    /**
+     * Refresh seat data for a specific user (useful after registration/profile updates)
+     */
+    public void refreshUserSeatData(String userId) {
+        try {
+            RoomMapping mapping = getRoomMapping();
+            
+            for (RoomInfo room : mapping.getRooms().values()) {
+                for (UserInfo userInfo : room.getSeats().values()) {
+                    if (userInfo.getUserId().equals(userId)) {
+                        // Found the user, refresh the room's seat data
+                        logger.info("Refreshing seat data for user {} in room {}", userId, room.getRoomId());
+                        broadcastSeatUpdate(room.getRoomId(), room);
+                        return;
+                    }
+                }
+            }
+            
+            logger.debug("User {} not found in any seat, no refresh needed", userId);
+            
+        } catch (Exception e) {
+            logger.error("Error refreshing user seat data for {}: {}", userId, e.getMessage());
+        }
     }
 }

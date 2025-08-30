@@ -325,7 +325,7 @@ public class ConsumableService {
     /**
      * Broadcast empty user status (for when user leaves)
      */
-    private void broadcastEmptyUserStatus(String userId, String roomId, Integer seatId) {
+    public void broadcastEmptyUserStatus(String userId, String roomId, Integer seatId) {
         Map<String, Object> statusUpdate = Map.of(
             "type", "USER_STATUS_UPDATE",
             "userId", userId,
@@ -375,12 +375,20 @@ public class ConsumableService {
      * Transfer consumables when user changes seats (for explicit seat swapping)
      */
     public void transferConsumablesOnSeatChange(String userId, String roomId, Integer oldSeatId, Integer newSeatId) {
+        transferConsumablesOnSeatChange(userId, roomId, oldSeatId, newSeatId, false);
+    }
+    
+    /**
+     * Transfer consumables when user changes seats with optional broadcast suppression
+     * @param suppressBroadcast if true, suppress the status update broadcast (caller will handle it)
+     */
+    public void transferConsumablesOnSeatChange(String userId, String roomId, Integer oldSeatId, Integer newSeatId, boolean suppressBroadcast) {
         // Since consumables follow the user (not the seat), we just need to update seat IDs and broadcast
         List<Consumable> consumables = getConsumables(userId, roomId, newSeatId); // Already follows user
         
         if (!consumables.isEmpty()) {
-            logger.info("User {} changing seats from {} to {} with {} consumables:", 
-                       userId, oldSeatId, newSeatId, consumables.size());
+            logger.info("User {} changing seats from {} to {} with {} consumables (suppressBroadcast={}):", 
+                       userId, oldSeatId, newSeatId, consumables.size(), suppressBroadcast);
             
             // Log current state
             for (Consumable c : consumables) {
@@ -396,18 +404,22 @@ public class ConsumableService {
             
             logger.info("Seat change complete - consumables moved to seat {} with preserved timers", newSeatId);
             
-            // First, broadcast empty status for old seat to clear ghost images
-            broadcastEmptyUserStatus(userId, roomId, oldSeatId);
-            
-            // Small delay to ensure old seat is cleared first
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            if (!suppressBroadcast) {
+                // First, broadcast empty status for old seat to clear ghost images
+                broadcastEmptyUserStatus(userId, roomId, oldSeatId);
+                
+                // Small delay to ensure old seat is cleared first
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                
+                // Then broadcast new status for new seat
+                broadcastUserStatusUpdate(userId, roomId, newSeatId);
+            } else {
+                logger.info("Broadcast suppressed - caller will handle final status update");
             }
-            
-            // Then broadcast new status for new seat
-            broadcastUserStatusUpdate(userId, roomId, newSeatId);
         } else {
             logger.info("User {} changing seats from {} to {} - no consumables to transfer", userId, oldSeatId, newSeatId);
         }
@@ -417,7 +429,7 @@ public class ConsumableService {
     /**
      * Broadcast user status update to room
      */
-    private void broadcastUserStatusUpdate(String userId, String roomId, Integer seatId) {
+    public void broadcastUserStatusUpdate(String userId, String roomId, Integer seatId) {
         List<Consumable> consumables = getConsumables(userId, roomId, seatId);
         
         UserStatusUpdate statusUpdate = new UserStatusUpdate(userId, roomId, seatId, consumables);

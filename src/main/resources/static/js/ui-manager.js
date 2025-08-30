@@ -5,6 +5,9 @@ class UIManager {
         this.currentSeat = null;
         this.occupiedSeats = new Set();
         
+        // Initialize TTS service
+        this.ttsService = new TTSService();
+        
         this.initializeElements();
         this.attachEventListeners();
         // Don't check for existing user here - wait for initialization to complete
@@ -38,7 +41,17 @@ class UIManager {
             connectionStatus: document.getElementById('connection-status'),
             
             masterStatusLabel: document.getElementById('master-status-label'),
-            masterStatusText: document.getElementById('master-status-text')
+            masterStatusText: document.getElementById('master-status-text'),
+            
+            // TTS controls
+            ttsControls: document.getElementById('tts-controls'),
+            ttsToggleBtn: document.getElementById('tts-toggle-btn'),
+            ttsTestBtn: document.getElementById('tts-test-btn'),
+            ttsSkipBtn: document.getElementById('tts-skip-btn'),
+            ttsClearBtn: document.getElementById('tts-clear-btn'),
+            ttsQueueStatus: document.getElementById('tts-queue-status'),
+            ttsCurrentText: document.getElementById('tts-current-text'),
+            ttsCurrent: document.getElementById('tts-current')
         };
     }
 
@@ -64,6 +77,23 @@ class UIManager {
         });
 
         this.elements.leaveSeatBtn.addEventListener('click', () => this.leaveSeat());
+        
+        // TTS controls
+        if (this.elements.ttsToggleBtn) {
+            this.elements.ttsToggleBtn.addEventListener('click', () => this.toggleTTS());
+        }
+        if (this.elements.ttsTestBtn) {
+            this.elements.ttsTestBtn.addEventListener('click', () => this.testTTS());
+        }
+        if (this.elements.ttsSkipBtn) {
+            this.elements.ttsSkipBtn.addEventListener('click', () => this.skipCurrentTTS());
+        }
+        if (this.elements.ttsClearBtn) {
+            this.elements.ttsClearBtn.addEventListener('click', () => this.clearTTSQueue());
+        }
+        
+        // Listen for TTS queue updates
+        document.addEventListener('tts-queue-update', (event) => this.handleTTSQueueUpdate(event.detail));
     }
 
     /**
@@ -235,10 +265,14 @@ class UIManager {
         this.elements.chatInterface.classList.remove('hidden');
         this.elements.seatControls.classList.remove('hidden');
         this.elements.statusDisplay.classList.remove('hidden');
+        this.elements.ttsControls.classList.remove('hidden');
         // Don't show the HTML master status label anymore - use Three.js sprite instead
         // this.elements.masterStatusLabel.classList.remove('hidden');
         
         this.addSystemMessage('Welcome to Meshiya! Take a seat and enjoy your stay.');
+        
+        // Initialize TTS toggle button state
+        this.updateTTSToggleButton();
     }
 
 
@@ -283,6 +317,35 @@ class UIManager {
         window.wsClient.leaveSeat();
     }
 
+    // Helper method to trigger user image state changes
+    triggerUserImageState(userName, userId, imageType, duration = 3000) {
+        if (!userName || !window.dinerScene) return;
+        
+        // Find which seat the user is in
+        const seatStates = window.dinerScene.getSeatStates();
+        let userSeat = null;
+        
+        for (const [seatNumber, seatData] of seatStates) {
+            if (seatData.userId === userId) {
+                userSeat = seatNumber;
+                break;
+            }
+        }
+        
+        if (userSeat) {
+            console.log(`🎭 Changing ${userName} to ${imageType} state for ${duration}ms`);
+            
+            // Change to the specified state
+            window.dinerScene.updateUserImageState(userSeat, imageType);
+            
+            // Return to normal state after duration
+            setTimeout(() => {
+                window.dinerScene.updateUserImageState(userSeat, 'normal');
+                console.log(`🎭 ${userName} returned to normal state`);
+            }, duration);
+        }
+    }
+    
     // Message handling
     handleMessage(message) {
         console.log('UI Manager handling message:', message);
@@ -290,6 +353,12 @@ class UIManager {
         switch (message.type) {
             case 'CHAT_MESSAGE':
                 this.addChatMessage(message.userName, message.content, message.timestamp);
+                // Record user activity for idle tracking
+                if (window.userStatusManager && message.userId) {
+                    window.userStatusManager.recordUserActivity(message.userId);
+                }
+                // Trigger chatting image state for the user who sent the message
+                this.triggerUserImageState(message.userName, message.userId, 'chatting');
                 break;
                 
             case 'SYSTEM_MESSAGE':
@@ -432,6 +501,7 @@ class UIManager {
             <div class="message-header">
                 <span class="message-sender">Master:</span>
                 <span class="message-timestamp">${timestampStr}</span>
+                <span class="tts-indicator" style="display: none;">🔊</span>
             </div>
             <div class="message-content">${this.escapeHtml(content)}</div>
         `;
@@ -442,6 +512,9 @@ class UIManager {
         if (window.meshiya && window.meshiya.dinerScene) {
             window.meshiya.dinerScene.showChefSpeechBubble(content);
         }
+        
+        // Convert Master's response to speech
+        this.speakMasterResponse(content, messageEl);
     }
 
     appendMessage(messageEl, timestamp) {
@@ -669,4 +742,156 @@ class UIManager {
     getOccupiedSeats() {
         return new Set(this.occupiedSeats);
     }
+
+    /**
+     * Convert Master's response to speech
+     * @param {string} content - The Master's message content
+     * @param {Element} messageEl - The message element for visual indicators
+     */
+    async speakMasterResponse(content, messageEl) {
+        if (!this.ttsService || !this.ttsService.isAvailable()) {
+            return;
+        }
+
+        try {
+            // Find the TTS indicator in the message element
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            
+            // Show loading/playing indicator
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'inline';
+                ttsIndicator.textContent = '🔄'; // Loading indicator
+            }
+
+            // Speak the Master's response
+            await this.ttsService.speak(content);
+
+            // Hide indicator when done
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'none';
+            }
+
+        } catch (error) {
+            console.error('Failed to speak Master response:', error);
+            
+            // Hide indicator on error
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'none';
+            }
+        }
+    }
+
+    /**
+     * Toggle TTS on/off
+     * @param {boolean} enabled - Whether TTS should be enabled
+     */
+    setTTSEnabled(enabled) {
+        if (this.ttsService) {
+            this.ttsService.setEnabled(enabled);
+        }
+    }
+
+    /**
+     * Get current TTS status
+     * @returns {boolean} - Whether TTS is enabled
+     */
+    isTTSEnabled() {
+        return this.ttsService ? this.ttsService.isAvailable() : false;
+    }
+
+    /**
+     * Stop any currently playing TTS audio
+     */
+    stopTTS() {
+        if (this.ttsService) {
+            this.ttsService.stop();
+        }
+    }
+
+    /**
+     * Test TTS functionality
+     */
+    testTTS() {
+        if (this.ttsService) {
+            this.ttsService.test();
+        }
+    }
+
+    /**
+     * Toggle TTS on/off
+     */
+    toggleTTS() {
+        if (!this.ttsService) return;
+        
+        const currentState = this.ttsService.isAvailable();
+        this.ttsService.setEnabled(!currentState);
+        this.updateTTSToggleButton();
+        
+        if (!currentState) {
+            this.addSystemMessage('Master voice enabled 🔊');
+        } else {
+            this.addSystemMessage('Master voice muted 🔇');
+        }
+    }
+
+    /**
+     * Update the TTS toggle button appearance
+     */
+    updateTTSToggleButton() {
+        if (!this.elements.ttsToggleBtn || !this.ttsService) return;
+        
+        const isEnabled = this.ttsService.isAvailable();
+        this.elements.ttsToggleBtn.textContent = isEnabled ? '🔇 Mute' : '🔊 Enable';
+        this.elements.ttsToggleBtn.classList.toggle('tts-enabled', isEnabled);
+        this.elements.ttsToggleBtn.classList.toggle('tts-disabled', !isEnabled);
+    }
+
+    /**
+     * Skip current TTS audio
+     */
+    skipCurrentTTS() {
+        if (this.ttsService) {
+            this.ttsService.skipCurrent();
+        }
+    }
+
+    /**
+     * Clear TTS queue
+     */
+    clearTTSQueue() {
+        if (this.ttsService) {
+            this.ttsService.stop(); // This clears queue and stops current
+            this.addSystemMessage('🔇 TTS queue cleared');
+        }
+    }
+
+    /**
+     * Handle TTS queue updates
+     */
+    handleTTSQueueUpdate(status) {
+        // Update queue status display
+        if (this.elements.ttsQueueStatus) {
+            this.elements.ttsQueueStatus.textContent = `Queue: ${status.queueLength}`;
+        }
+
+        // Show/hide current playing text
+        if (this.elements.ttsCurrent && this.elements.ttsCurrentText) {
+            if (status.isPlaying && status.currentItem) {
+                this.elements.ttsCurrentText.textContent = status.currentItem;
+                this.elements.ttsCurrent.classList.remove('hidden');
+            } else {
+                this.elements.ttsCurrent.classList.add('hidden');
+            }
+        }
+
+        // Enable/disable controls based on queue state
+        if (this.elements.ttsSkipBtn) {
+            this.elements.ttsSkipBtn.disabled = !status.isPlaying;
+        }
+        if (this.elements.ttsClearBtn) {
+            this.elements.ttsClearBtn.disabled = status.queueLength === 0 && !status.isPlaying;
+        }
+    }
+
 }

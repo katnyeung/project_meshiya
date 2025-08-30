@@ -1,6 +1,8 @@
 package com.meshiya.dto;
 
 import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.HashMap;
 
 /**
  * Comprehensive user profile data stored in Redis
@@ -15,6 +17,10 @@ public class UserProfile {
     private LocalDateTime joinTime;
     private boolean isActive;
     private String status; // "ONLINE", "INACTIVE", "DISCONNECTED"
+    
+    // Registration and image management
+    private boolean isRegistered = false;
+    private Map<String, String> profileImageUrls = new HashMap<>(); // imageType -> URL
     
     public UserProfile() {}
     
@@ -52,6 +58,20 @@ public class UserProfile {
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 
+    public boolean isRegistered() { return isRegistered; }
+    public void setRegistered(boolean registered) { isRegistered = registered; }
+
+    public Map<String, String> getProfileImageUrls() { return profileImageUrls; }
+    public void setProfileImageUrls(Map<String, String> profileImageUrls) { this.profileImageUrls = profileImageUrls; }
+    
+    public String getProfileImageUrl(String imageType) {
+        return profileImageUrls.get(imageType);
+    }
+    
+    public void setProfileImageUrl(String imageType, String url) {
+        this.profileImageUrls.put(imageType, url);
+    }
+
     /**
      * Update user activity timestamp and set as active
      */
@@ -71,7 +91,7 @@ public class UserProfile {
 
     @Override
     public String toString() {
-        return String.format("UserProfile{userId='%s', userName='%s', roomId='%s', currentSeat=%s, lastActivity=%s, isActive=%s, status='%s'}", 
-                           userId, userName, roomId, currentSeat, lastActivity, isActive, status);
+        return String.format("UserProfile{userId='%s', userName='%s', roomId='%s', currentSeat=%s, lastActivity=%s, isActive=%s, status='%s', isRegistered=%s}", 
+                           userId, userName, roomId, currentSeat, lastActivity, isActive, status, isRegistered);
     }
 }

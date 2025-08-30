@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS Integration Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #1a1a2e;
+            color: #e0e0e0;
+        }
+        .test-panel {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #8b4513;
+            border-radius: 10px;
+        }
+        button {
+            background: rgba(139, 69, 19, 0.8);
+            border: 1px solid #8b4513;
+            color: #e0e0e0;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: rgba(139, 69, 19, 1);
+            border-color: #ffd700;
+        }
+        .message {
+            background: rgba(50, 50, 50, 0.8);
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #8b4513;
+        }
+        .master-message {
+            border-left-color: #ffd700;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.success {
+            background-color: rgba(0, 128, 0, 0.3);
+            color: #90ee90;
+        }
+        .status.error {
+            background-color: rgba(128, 0, 0, 0.3);
+            color: #ff6b6b;
+        }
+        .status.info {
+            background-color: rgba(0, 100, 150, 0.3);
+            color: #87ceeb;
+        }
+        .tts-indicator {
+            color: #ffd700;
+            font-size: 12px;
+            margin-left: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-panel">
+        <h1>🔊 TTS Integration Test</h1>
+        <p>This page tests the TTS service integration with Master responses.</p>
+        
+        <div class="controls">
+            <button onclick="testBasicTTS()">Test Basic TTS</button>
+            <button onclick="testMasterResponse()">Test Master Response</button>
+            <button onclick="testMasterResponseWithAction()">Test Master with Actions</button>
+            <button onclick="testMultiple()">Test Multiple (Queue)</button>
+            <button onclick="testHistoricalMessages()">Test Historical Messages</button>
+            <button onclick="resetJoinTimestamp()">Reset Join Time</button>
+            <button onclick="toggleTTS()">Toggle TTS</button>
+            <button onclick="skipCurrent()">Skip Current</button>
+            <button onclick="clearQueue()">Clear Queue</button>
+        </div>
+        
+        <div id="queue-status" style="background: rgba(50,50,50,0.8); padding: 10px; margin: 10px 0; border-radius: 5px;">
+            <strong>Queue Status:</strong> <span id="queue-info">Loading...</span>
+        </div>
+        
+        <div id="status"></div>
+        <div id="messages"></div>
+    </div>
+
+    <script src="js/tts-service.js"></script>
+    <script>
+        // Initialize TTS service
+        const ttsService = new TTSService();
+        
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+        
+        function addMessage(content, isMaster = false) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isMaster ? 'master-message' : ''}`;
+            
+            if (isMaster) {
+                messageDiv.innerHTML = `
+                    <strong>Master:</strong> 
+                    <span class="tts-indicator" style="display: none;">🔄</span>
+                    <br>
+                    ${content}
+                `;
+            } else {
+                messageDiv.innerHTML = content;
+            }
+            
+            messagesDiv.appendChild(messageDiv);
+            
+            // If it's a master message, trigger TTS
+            if (isMaster) {
+                speakMasterMessage(content, messageDiv);
+            }
+            
+            return messageDiv;
+        }
+        
+        async function speakMasterMessage(content, messageEl) {
+            const indicator = messageEl.querySelector('.tts-indicator');
+            
+            try {
+                if (indicator) {
+                    indicator.style.display = 'inline';
+                    indicator.textContent = '🔄';
+                }
+                
+                showStatus('🔊 Converting Master response to speech...', 'info');
+                await ttsService.speak(content);
+                showStatus('✅ TTS playback completed successfully!', 'success');
+                
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+                
+            } catch (error) {
+                console.error('TTS Error:', error);
+                showStatus(`❌ TTS Error: ${error.message}`, 'error');
+                
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+            }
+        }
+        
+        async function testBasicTTS() {
+            showStatus('Testing basic TTS functionality...', 'info');
+            try {
+                await ttsService.speak('Hello! This is a basic TTS test.');
+                showStatus('✅ Basic TTS test completed!', 'success');
+            } catch (error) {
+                showStatus(`❌ Basic TTS test failed: ${error.message}`, 'error');
+            }
+        }
+        
+        function testMasterResponse() {
+            const masterResponse = 'Warm sake gently heated to enhance its aroma and flavor, served traditionally to complement Japanese dishes and soothe the evening.';
+            addMessage(masterResponse, true);
+        }
+        
+        function testMasterResponseWithAction() {
+            const masterResponse = 'Warm sake gently heated to enhance its aroma and flavor, served traditionally to complement Japanese dishes and soothe the evening. *begins preparing Nurui Sake*';
+            addMessage(masterResponse, true);
+        }
+        
+        function toggleTTS() {
+            const currentState = ttsService.isAvailable();
+            ttsService.setEnabled(!currentState);
+            
+            const newState = ttsService.isAvailable();
+            showStatus(`TTS ${newState ? 'enabled' : 'disabled'}`, 'info');
+        }
+        
+        function testMultiple() {
+            showStatus('Testing multiple TTS requests (should queue properly)...', 'info');
+            
+            const messages = [
+                "First message in the queue.",
+                "Second message should play after the first.",
+                "Third message demonstrates the queue system working correctly."
+            ];
+            
+            messages.forEach((msg, index) => {
+                setTimeout(() => {
+                    addMessage(`Test ${index + 1}: ${msg}`, true);
+                }, index * 500);
+            });
+        }
+        
+        function skipCurrent() {
+            if (ttsService) {
+                ttsService.skipCurrent();
+                showStatus('Skipped current TTS audio', 'info');
+            }
+        }
+        
+        function clearQueue() {
+            if (ttsService) {
+                ttsService.stop();
+                showStatus('Cleared TTS queue and stopped current audio', 'info');
+            }
+        }
+        
+        function testHistoricalMessages() {
+            showStatus('Testing historical messages (should be filtered out)...', 'info');
+            
+            // Create fake historical messages with old timestamps
+            const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+            const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+            
+            // These should be filtered out by timestamp cutoff
+            const historicalMessages = [
+                { text: "This is an old message from 1 hour ago", timestamp: oneHourAgo },
+                { text: "This is an older message from 2 hours ago", timestamp: twoHoursAgo },
+            ];
+            
+            historicalMessages.forEach((msg, index) => {
+                const messageEl = document.createElement('div');
+                messageEl.className = 'message master-message';
+                messageEl.innerHTML = `
+                    <strong>Master (Historical ${index + 1}):</strong>
+                    <span class="tts-indicator" style="display: none;">🔄</span>
+                    <br>
+                    ${msg.text}
+                `;
+                document.getElementById('messages').appendChild(messageEl);
+                
+                // Try to speak with historical timestamp (should be filtered)
+                speakMasterMessage(msg.text, messageEl, msg.timestamp);
+            });
+            
+            showStatus('Historical messages added - they should NOT play TTS due to timestamp cutoff', 'info');
+        }
+        
+        function resetJoinTimestamp() {
+            if (ttsService) {
+                ttsService.setJoinTimestamp();
+                showStatus('Join timestamp reset - historical messages will now play TTS', 'success');
+            }
+        }
+        
+        async function speakMasterMessage(content, messageEl, timestamp = null) {
+            const indicator = messageEl.querySelector('.tts-indicator');
+            
+            try {
+                if (indicator) {
+                    indicator.style.display = 'inline';
+                    indicator.textContent = '🔄';
+                }
+                
+                showStatus('🔊 Converting Master response to speech...', 'info');
+                await ttsService.speak(content, null, timestamp);
+                showStatus('✅ TTS playback completed successfully!', 'success');
+                
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+                
+            } catch (error) {
+                console.error('TTS Error:', error);
+                showStatus(`❌ TTS Error: ${error.message}`, 'error');
+                
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+            }
+        }
+        
+        function updateQueueStatus() {
+            if (ttsService) {
+                const status = ttsService.getQueueStatus();
+                document.getElementById('queue-info').textContent = 
+                    `Queue: ${status.queueLength} | Processing: ${status.isProcessing} | Playing: ${status.isPlaying}`;
+            }
+        }
+        
+        // Listen for queue updates
+        document.addEventListener('tts-queue-update', (event) => {
+            const status = event.detail;
+            document.getElementById('queue-info').textContent = 
+                `Queue: ${status.queueLength} | Processing: ${status.isProcessing} | Playing: ${status.isPlaying}`;
+        });
+        
+        // Show initial status
+        showStatus(`TTS Service initialized. Default voice: ${ttsService.defaultVoice}`, 'success');
+        
+        // Test API availability on load
+        fetch('/api/tts/health')
+        .then(response => {
+            if (response.ok) {
+                return response.json();
+            }
+            throw new Error(`HTTP ${response.status}`);
+        })
+        .then(data => {
+            showStatus(`✅ TTS Service: ${data.status} (Voice: ${data.defaultVoice})`, 'success');
+        })
+        .catch(error => {
+            showStatus(`❌ Cannot connect to TTS service: ${error.message}`, 'error');
+        });
+    </script>
+</body>
+</html>

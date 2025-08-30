@@ -63,6 +63,18 @@
       "maxTokens": 150,
       "presencePenalty": 0.1,
       "frequencyPenalty": 0.2
+    },
+    "conversationManagement": {
+      "masterKeywords": ["master"],
+      "conversationTimeoutSeconds": 60,
+      "idleMonitoringMinutes": 2,
+      "densityCheckMinutes": 3,
+      "densityThresholdMessages": 5,
+      "minSecondsBetweenResponses": 10,
+      "minSecondsBetweenLlmCalls": 15,
+      "enableSmartTriggering": true,
+      "enableIdleEngagement": true,
+      "enableDensityLeadership": true
     }
   }
 }

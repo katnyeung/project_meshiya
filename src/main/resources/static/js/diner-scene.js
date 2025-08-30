@@ -334,6 +334,9 @@ class DinerScene {
             this.sprites.seats.push(seatSprite);
             this.scene.add(seatSprite);
             this.seatStates.set(seatNumber, { occupied: false, userId: null });
+            
+            // Ensure seat shows as available (green) initially
+            this.updateSeatSprite(seat);
         });
     }
     
@@ -345,9 +348,15 @@ class DinerScene {
         loader.load('/assets/images/stool.png', (texture) => {
             const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
             sprite.material = material;
+            // Update sprite appearance after texture loads
+            const seat = this.seats.find(s => s.sprite === sprite);
+            if (seat) this.updateSeatSprite(seat);
         }, undefined, (error) => {
             console.warn('Could not load stool.png, falling back to canvas stool');
             sprite.material = this.createFallbackSeatMaterial(seatNumber);
+            // Update sprite appearance after fallback material is set
+            const seat = this.seats.find(s => s.sprite === sprite);
+            if (seat) this.updateSeatSprite(seat);
         });
         
         return sprite;
@@ -393,6 +402,8 @@ class DinerScene {
     }
     
     updateSeatSprite(seat) {
+        console.log(`🪑 Updating seat ${seat.seatNumber} sprite - occupied: ${seat.occupied}, isCurrentUser: ${seat.isCurrentUser}`);
+        
         // Check if we're using external stool image or fallback
         const hasExternalTexture = seat.sprite.material.map && 
                                   seat.sprite.material.map.image && 
@@ -518,11 +529,135 @@ class DinerScene {
         }
     }
 
-    createCustomerSprite(seatNumber, isCurrentUser = false) {
-        // Try to load external customer image first
+    createCustomerSprite(seatNumber, isCurrentUser = false, userId = null, userName = null) {
+        console.log(`🎭 [CREATE SPRITE] Creating customer sprite for seat ${seatNumber}`);
+        console.log(`📝 [USER DATA] userId="${userId}", userName="${userName}", isCurrentUser=${isCurrentUser}`);
+        console.log(`🔍 [CHECK] userId truthy: ${!!userId}, userName truthy: ${!!userName}`);
+        console.log(`🔍 [TYPES] userId type: ${typeof userId}, userName type: ${typeof userName}`);
+        
         const loader = new THREE.TextureLoader();
         const sprite = new THREE.Sprite();
         
+        // Check if we should load custom user image for registered users
+        const shouldLoad = this.shouldLoadCustomImage(userId, userName);
+        console.log(`🤔 [SHOULD LOAD] Result: ${shouldLoad} (userId && userName && shouldLoadCustomImage)`);
+        console.log(`🧮 [LOGIC] userId: ${!!userId}, userName: ${!!userName}, shouldLoadCustomImage: ${shouldLoad}`);
+        
+        if (userId && userName && shouldLoad) {
+            console.log(`✅ [CUSTOM] Loading custom image for ${userName} at seat ${seatNumber}`);
+            this.loadCustomUserImage(sprite, userName, 'normal', isCurrentUser);
+        } else {
+            console.log(`🖼️ [DEFAULT] Loading default image for seat ${seatNumber} - Reason: userId=${!!userId}, userName=${!!userName}, shouldLoad=${shouldLoad}`);
+            
+            // Fallback to default images
+            const imageName = isCurrentUser ? 'customer-self.png' : 'customer.png';
+            
+            loader.load(`/assets/images/${imageName}`, (texture) => {
+                const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+                sprite.material = material;
+                console.log(`✅ [DEFAULT LOADED] Default image ${imageName} loaded for seat ${seatNumber}`);
+            }, undefined, (error) => {
+                console.warn(`❌ [DEFAULT FAILED] Could not load ${imageName}, falling back to canvas customer`);
+                sprite.material = this.createFallbackCustomerMaterial(isCurrentUser);
+            });
+        }
+        
+        // Position customer slightly behind and above the seat
+        const seat = this.seats[seatNumber - 1];
+        if (seat) {
+            sprite.position.set(seat.position.x, seat.position.y + 0.5, 2);
+            sprite.scale.set(2, 2, 1);
+        }
+        
+        // Store user info for future image updates
+        sprite.userData = {
+            userId: userId,
+            userName: userName,
+            isCurrentUser: isCurrentUser,
+            seatNumber: seatNumber
+        };
+        
+        return sprite;
+    }
+    
+    shouldLoadCustomImage(userId, userName) {
+        // For MVP, always try to load custom images for any user
+        // The API will return 404 if no custom image exists, and we'll fall back to defaults
+        const shouldLoad = userName && userName.trim().length > 0;
+        console.log(`🤔 [DECISION] Should load custom image for ${userName} (ID: ${userId})? ${shouldLoad}`);
+        return shouldLoad;
+    }
+    
+    async loadCustomUserImage(sprite, userName, imageType = 'normal', isCurrentUser = false) {
+        console.log(`🖼️ [IMAGE LOADING] Starting custom image load for user: ${userName}, type: ${imageType}, isCurrentUser: ${isCurrentUser}`);
+        
+        try {
+            // Simple approach: always use the username provided by the seat data
+            // The backend should ensure seat data has the correct username for image lookup
+            const headers = {};
+            
+            if (window.authManager && window.authManager.isUserLoggedIn()) {
+                const currentUser = window.authManager.getLoggedInUser();
+                if (currentUser) {
+                    headers['X-Username'] = currentUser.username;
+                    console.log(`🔑 [AUTH] Adding X-Username header: ${currentUser.username}`);
+                }
+            }
+            
+            const apiUrl = `/api/images/${userName}/${imageType}`;
+            console.log(`🌐 [API] Fetching: ${apiUrl}`);
+            console.log(`📋 [API] Headers:`, headers);
+            
+            // Try to load custom image from MinIO
+            const response = await fetch(apiUrl, {
+                method: 'GET',
+                headers: headers
+            });
+            
+            console.log(`📡 [RESPONSE] Status: ${response.status} ${response.statusText}`);
+            console.log(`📡 [RESPONSE] Headers:`, [...response.headers.entries()]);
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log(`📝 [DATA] Response data:`, data);
+                
+                if (data.success && data.imageUrl) {
+                    console.log(`🎯 [SUCCESS] Loading texture from: ${data.imageUrl}`);
+                    const loader = new THREE.TextureLoader();
+                    
+                    loader.load(data.imageUrl, (texture) => {
+                        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+                        sprite.material = material;
+                        console.log(`✅ [COMPLETE] Successfully loaded custom ${imageType} image for user: ${userName}`);
+                        console.log(`📊 [TEXTURE] Size: ${texture.image.width}x${texture.image.height}`);
+                    }, (progress) => {
+                        console.log(`⏳ [LOADING] Progress: ${Math.round((progress.loaded / progress.total) * 100)}%`);
+                    }, (error) => {
+                        console.error(`❌ [TEXTURE ERROR] Failed to load texture from ${data.imageUrl}:`, error);
+                        console.log(`🔄 [FALLBACK] Using fallback image for ${userName}`);
+                        this.loadFallbackImage(sprite, isCurrentUser);
+                    });
+                } else {
+                    console.log(`⚠️ [API RESPONSE] API returned success=false or no imageUrl for ${userName}/${imageType}`);
+                    console.log(`📝 [API RESPONSE] Data:`, data);
+                    this.loadFallbackImage(sprite, isCurrentUser);
+                }
+            } else {
+                const errorText = await response.text().catch(() => 'Unable to read response text');
+                console.log(`⚠️ [HTTP ERROR] ${response.status} ${response.statusText} for ${userName}/${imageType}`);
+                console.log(`📝 [ERROR BODY] ${errorText}`);
+                this.loadFallbackImage(sprite, isCurrentUser);
+            }
+            
+        } catch (error) {
+            console.error(`❌ [EXCEPTION] Error loading custom image for ${userName}/${imageType}:`, error);
+            console.log(`🔄 [FALLBACK] Using fallback image due to exception`);
+            this.loadFallbackImage(sprite, isCurrentUser);
+        }
+    }
+    
+    loadFallbackImage(sprite, isCurrentUser) {
+        const loader = new THREE.TextureLoader();
         const imageName = isCurrentUser ? 'customer-self.png' : 'customer.png';
         
         loader.load(`/assets/images/${imageName}`, (texture) => {
@@ -532,15 +667,37 @@ class DinerScene {
             console.warn(`Could not load ${imageName}, falling back to canvas customer`);
             sprite.material = this.createFallbackCustomerMaterial(isCurrentUser);
         });
+    }
+    
+    // Method to update user image based on activity state
+    updateUserImageState(seatNumber, imageType = 'normal') {
+        console.log(`🎭 [STATE CHANGE] Updating user image state for seat ${seatNumber} to '${imageType}'`);
         
-        // Position customer slightly behind and above the seat
-        const seat = this.seats[seatNumber - 1];
-        if (seat) {
-            sprite.position.set(seat.position.x, seat.position.y + 0.5, 2);
-            sprite.scale.set(2, 2, 1);
+        if (seatNumber < 1 || seatNumber > 8) {
+            console.warn(`⚠️ [INVALID SEAT] Seat number ${seatNumber} is out of range (1-8)`);
+            return;
         }
         
-        return sprite;
+        const customerSprite = this.sprites.customers[seatNumber - 1];
+        if (!customerSprite) {
+            console.log(`🚫 [NO SPRITE] No customer sprite found for seat ${seatNumber}`);
+            return;
+        }
+        
+        if (!customerSprite.userData) {
+            console.warn(`⚠️ [NO USER DATA] Customer sprite at seat ${seatNumber} has no userData`);
+            return;
+        }
+        
+        const { userId, userName, isCurrentUser } = customerSprite.userData;
+        console.log(`📝 [USER INFO] Seat ${seatNumber}: userId=${userId}, userName=${userName}, isCurrentUser=${isCurrentUser}`);
+        
+        if (userId && userName && this.shouldLoadCustomImage(userId, userName)) {
+            console.log(`✅ [LOADING] Loading custom ${imageType} image for ${userName} at seat ${seatNumber}`);
+            this.loadCustomUserImage(customerSprite, userName, imageType, isCurrentUser);
+        } else {
+            console.log(`⚠️ [SKIP] Skipping custom image load for seat ${seatNumber} (missing userId/userName or shouldLoadCustomImage returned false)`);
+        }
     }
     
     createFallbackCustomerMaterial(isCurrentUser = false) {
@@ -581,12 +738,12 @@ class DinerScene {
         return new THREE.SpriteMaterial({ map: texture, transparent: true });
     }
     
-    addCustomerToSeat(seatNumber, isCurrentUser = false) {
+    addCustomerToSeat(seatNumber, isCurrentUser = false, userId = null, userName = null) {
         // Remove any existing customer sprite for this seat
         this.removeCustomerFromSeat(seatNumber);
         
-        // Create new customer sprite
-        const customerSprite = this.createCustomerSprite(seatNumber, isCurrentUser);
+        // Create new customer sprite with user info
+        const customerSprite = this.createCustomerSprite(seatNumber, isCurrentUser, userId, userName);
         this.sprites.customers[seatNumber - 1] = customerSprite;
         this.scene.add(customerSprite);
     }
@@ -620,7 +777,8 @@ class DinerScene {
             }
             
             // Add customer avatar
-            this.addCustomerToSeat(seatNumber, isCurrentUser);
+            console.log(`🔌 [JOIN_SEAT] Calling addCustomerToSeat with: seatNumber=${seatNumber}, isCurrentUser=${isCurrentUser}, userId="${message.userId}", userName="${message.userName}"`);
+            this.addCustomerToSeat(seatNumber, isCurrentUser, message.userId, message.userName);
             
         } else if (message.type === 'LEAVE_SEAT') {
             const leavingUserId = message.userId;
@@ -648,7 +806,8 @@ class DinerScene {
             if (message.occupied) {
                 const isCurrentUser = message.userId === window.wsClient?.userId;
                 this.updateSeatState(seatNumber, true, isCurrentUser);
-                this.addCustomerToSeat(seatNumber, isCurrentUser);
+                console.log(`🔌 [SEAT_STATUS] Calling addCustomerToSeat with: seatNumber=${seatNumber}, isCurrentUser=${isCurrentUser}, userId="${message.userId}", userName="${message.userName}"`);
+                this.addCustomerToSeat(seatNumber, isCurrentUser, message.userId, message.userName);
             } else {
                 this.updateSeatState(seatNumber, false, false);
                 this.removeCustomerFromSeat(seatNumber);

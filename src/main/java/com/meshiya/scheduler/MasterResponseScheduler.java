@@ -5,6 +5,7 @@ import com.meshiya.model.MessageType;
 import com.meshiya.service.MasterService;
 import com.meshiya.service.ChatService;
 import com.meshiya.service.RoomService;
+import com.meshiya.service.RedisService;
 import com.meshiya.event.ChatMessageEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +37,9 @@ public class MasterResponseScheduler {
     @Autowired  
     private RoomService roomService;
     
+    @Autowired
+    private RedisService redisService;
+    
     // Message buffers per room for batch processing
     private final Map<String, Queue<ChatMessage>> messageBuffers = new HashMap<>();
     private final AtomicBoolean isProcessing = new AtomicBoolean(false);
@@ -44,84 +48,269 @@ public class MasterResponseScheduler {
     private final Map<String, LocalDateTime> lastResponses = new HashMap<>();
     private final Map<String, LocalDateTime> lastLlmCalls = new HashMap<>();
     
-    // Configuration - optimized for faster responses
+    // Enhanced conversation state management per room
+    private final Map<String, Boolean> conversationActive = new HashMap<>();
+    private final Map<String, LocalDateTime> conversationStartTime = new HashMap<>();
+    private final Map<String, LocalDateTime> lastUserMessage = new HashMap<>();
+    
+    // Configuration - enhanced conversation management
     private static final int MIN_MESSAGES_BEFORE_ANALYSIS = 1; // Allow single messages to trigger
     private static final int MIN_SECONDS_BETWEEN_RESPONSES = 10; // Faster response - reduced from 30 to 10
     private static final int MIN_SECONDS_BETWEEN_LLM_CALLS = 15; // Faster LLM calls - reduced from 45 to 15
+    
+    // New conversation timing configurations
+    private static final int CONVERSATION_TIMEOUT_SECONDS = 60; // Keep responding for 1 minute after last message
+    private static final int IDLE_MONITORING_MINUTES = 2; // Check for proactive engagement after 2min idle
+    private static final int DENSITY_CHECK_MINUTES = 3; // Check message density over 3min window
+    private static final int DENSITY_THRESHOLD_MESSAGES = 5; // 5 messages triggers conversation leadership
     
     // Default room for now (can be made configurable)
     private static final String DEFAULT_ROOM = "room1";
     
     /**
      * Listen to chat message events and add to buffer for analysis
+     * Enhanced with multiple trigger keywords ('master', 'chef', 'bartender', 'waiter') 
+     * and '/order' command detection for conversation state management
      */
     @EventListener
     public void handleChatMessageEvent(ChatMessageEvent event) {
         ChatMessage message = event.getChatMessage();
+        logger.info("🎯 MasterResponseScheduler received ChatMessageEvent: type={}, userId={}, content={}", 
+                   message.getType(), message.getUserId(), message.getContent());
+        
         if (message.getType() == MessageType.CHAT_MESSAGE && 
             !"ai_master".equals(message.getUserId()) && 
             !"master".equals(message.getUserId())) {
             
             String roomId = message.getRoomId() != null ? message.getRoomId() : DEFAULT_ROOM;
+            LocalDateTime now = LocalDateTime.now();
+            
+            // Update last user message time for this room
+            lastUserMessage.put(roomId, now);
+            
+            // Check for trigger keywords or commands to activate conversation mode
+            String content = message.getContent().toLowerCase();
+            boolean hasOrderCommand = content.trim().startsWith("/order");
+            boolean mentionsMaster = content.contains("master") || 
+                                   content.contains("chef") || 
+                                   content.contains("bartender") || 
+                                   content.contains("waiter");
+            
+            if (mentionsMaster || hasOrderCommand) {
+                if (hasOrderCommand) {
+                    logger.info("Room {}: '/order' command detected in message: {}", roomId, message.getContent());
+                } else {
+                    logger.info("Room {}: trigger keyword detected in message: {}", roomId, message.getContent());
+                }
+                conversationActive.put(roomId, true);
+                conversationStartTime.put(roomId, now);
+            }
+            
+            // If in conversation mode, extend the conversation timeout
+            if (conversationActive.getOrDefault(roomId, false)) {
+                conversationStartTime.put(roomId, now); // Reset timeout on any message during conversation
+                logger.debug("Room {}: Conversation extended due to new message", roomId);
+            }
             
             // Get or create buffer for this room
             messageBuffers.computeIfAbsent(roomId, k -> new ConcurrentLinkedQueue<>()).offer(message);
             
-            logger.debug("Added message to buffer for room {}: {} (buffer size: {})", 
-                        roomId, message.getContent(), messageBuffers.get(roomId).size());
+            logger.debug("Added message to buffer for room {}: {} (buffer size: {}, conversation active: {})", 
+                        roomId, message.getContent(), messageBuffers.get(roomId).size(), 
+                        conversationActive.getOrDefault(roomId, false));
         }
     }
     
     /**
-     * Faster scheduler - runs every 5 seconds for quicker responses
-     * Let the LLM decide whether Master should respond, with rate limiting
+     * Enhanced scheduler with smart conversation triggers
+     * Runs every 5 seconds to check for various engagement scenarios
      */
-    @Scheduled(fixedRate = 5000) // Every 5 seconds (increased frequency)
+    @Scheduled(fixedRate = 10000) // Every 10 seconds to reduce log spam
     public void quickAnalysis() {
-        logger.debug("Running quick analysis check for {} rooms", messageBuffers.size());
+        if (messageBuffers.size() > 0) {
+            logger.info("📊 MasterScheduler: Analyzing {} rooms with messages", messageBuffers.size());
+        }
         
-        if (messageBuffers.isEmpty()) {
-            logger.debug("No messages in any room buffers");
+        LocalDateTime now = LocalDateTime.now();
+        
+        // Check all known rooms (both with messages and conversation states)
+        Set<String> allRooms = new HashSet<>();
+        allRooms.addAll(messageBuffers.keySet());
+        allRooms.addAll(conversationActive.keySet());
+        allRooms.addAll(lastUserMessage.keySet());
+        
+        if (allRooms.isEmpty()) {
+            logger.debug("No active rooms to analyze");
             return;
         }
         
-        // Process each room separately
-        for (Map.Entry<String, Queue<ChatMessage>> entry : messageBuffers.entrySet()) {
-            String roomId = entry.getKey();
-            Queue<ChatMessage> buffer = entry.getValue();
+        // Process each room separately with enhanced logic
+        for (String roomId : allRooms) {
+            Queue<ChatMessage> buffer = messageBuffers.get(roomId);
+            boolean isInConversation = conversationActive.getOrDefault(roomId, false);
+            LocalDateTime lastUserMsgTime = lastUserMessage.get(roomId);
+            LocalDateTime conversationStart = conversationStartTime.get(roomId);
             
-            if (buffer.isEmpty()) {
+            // Check conversation timeout (1 minute)
+            if (isInConversation && conversationStart != null) {
+                long secondsSinceConversationStart = java.time.Duration.between(conversationStart, now).toSeconds();
+                if (secondsSinceConversationStart > CONVERSATION_TIMEOUT_SECONDS) {
+                    logger.info("Room {}: Conversation timeout - exiting conversation mode after {} seconds", 
+                               roomId, secondsSinceConversationStart);
+                    conversationActive.put(roomId, false);
+                    conversationStartTime.remove(roomId);
+                    isInConversation = false;
+                }
+            }
+            
+            // Skip if no messages to process
+            if (buffer == null || buffer.isEmpty()) {
+                // Check for idle monitoring scenario (2 minutes no messages + users present)
+                if (lastUserMsgTime != null) {
+                    long minutesSinceLastMessage = java.time.Duration.between(lastUserMsgTime, now).toMinutes();
+                    if (minutesSinceLastMessage >= IDLE_MONITORING_MINUTES) {
+                        checkIdleEngagement(roomId, now);
+                    }
+                }
                 continue;
             }
             
-            // Basic minimum conditions per room
-            if (buffer.size() < MIN_MESSAGES_BEFORE_ANALYSIS) {
-                logger.debug("Room {}: Not enough messages for analysis (need {})", roomId, MIN_MESSAGES_BEFORE_ANALYSIS);
-                continue;
+            // Apply smart triggering logic
+            String triggerReason = determineTriggerReason(roomId, buffer, isInConversation, now);
+            if (triggerReason != null) {
+                logger.info("🚀 Room {}: TRIGGERED by: {}", roomId, triggerReason);
+                analyzeAndRespond(roomId);
+            } else {
+                logger.info("⏸️ Room {}: No trigger - buffer: {}, conversation: {}, density check needed", 
+                           roomId, buffer.size(), isInConversation);
+            }
+        }
+    }
+    
+    /**
+     * Determines if master should respond based on enhanced triggers
+     */
+    private String determineTriggerReason(String roomId, Queue<ChatMessage> buffer, boolean isInConversation, LocalDateTime now) {
+        // Basic rate limiting checks
+        LocalDateTime lastResponseForRoom = lastResponses.getOrDefault(roomId, now.minusMinutes(10));
+        LocalDateTime lastLlmCallForRoom = lastLlmCalls.getOrDefault(roomId, now.minusMinutes(10));
+        
+        long secondsSinceLastResponse = java.time.Duration.between(lastResponseForRoom, now).toSeconds();
+        long secondsSinceLastLlmCall = java.time.Duration.between(lastLlmCallForRoom, now).toSeconds();
+        
+        if (secondsSinceLastResponse < MIN_SECONDS_BETWEEN_RESPONSES) {
+            logger.info("Room {}: Rate limited - too soon since last response ({} seconds ago)", roomId, secondsSinceLastResponse);
+            return null;
+        }
+        
+        if (secondsSinceLastLlmCall < MIN_SECONDS_BETWEEN_LLM_CALLS) {
+            logger.info("Room {}: Rate limited - too soon since last LLM call ({} seconds ago)", roomId, secondsSinceLastLlmCall);
+            return null;
+        }
+        
+        // Trigger 1: Active conversation mode (respond to all messages)
+        if (isInConversation && buffer.size() >= MIN_MESSAGES_BEFORE_ANALYSIS) {
+            return "Active conversation mode - responding to all messages";
+        }
+        
+        // Trigger 2: 'master' keyword detection (handled in event listener, but ensure processing)
+        if (buffer.size() >= MIN_MESSAGES_BEFORE_ANALYSIS) {
+            // Check recent messages for master keyword
+            for (ChatMessage msg : buffer) {
+                if (msg.getContent().toLowerCase().contains("master")) {
+                    return "'master' keyword detected in recent messages";
+                }
+            }
+        }
+        
+        // Trigger 3: Message density check (5 messages in 3 minutes)
+        boolean densityTrigger = checkMessageDensity(roomId, now);
+        logger.info("🔍 Room {}: Density check result: {}", roomId, densityTrigger);
+        if (densityTrigger) {
+            return "High message density detected - conversation leadership";
+        }
+        
+        logger.debug("Room {}: No trigger conditions met - buffer size: {}, conversation: {}, density: {}", 
+                   roomId, buffer.size(), isInConversation, densityTrigger);
+        return null; // No trigger conditions met
+    }
+    
+    /**
+     * Checks for idle engagement scenario (2 minutes no messages + users present)
+     */
+    private void checkIdleEngagement(String roomId, LocalDateTime now) {
+        try {
+            // Check if there are users present using enhanced user presence check
+            int activeUserCount = redisService.getActiveUserCount();
+            boolean hasUsers = activeUserCount > 0;
+            
+            if (hasUsers) {
+                LocalDateTime lastResponseForRoom = lastResponses.getOrDefault(roomId, now.minusMinutes(10));
+                LocalDateTime lastLlmCallForRoom = lastLlmCalls.getOrDefault(roomId, now.minusMinutes(10));
+                
+                long secondsSinceLastResponse = java.time.Duration.between(lastResponseForRoom, now).toSeconds();
+                long secondsSinceLastLlmCall = java.time.Duration.between(lastLlmCallForRoom, now).toSeconds();
+                
+                // Apply rate limiting for idle engagement too
+                if (secondsSinceLastResponse >= MIN_SECONDS_BETWEEN_RESPONSES && 
+                    secondsSinceLastLlmCall >= MIN_SECONDS_BETWEEN_LLM_CALLS) {
+                    
+                    logger.info("Room {}: Idle engagement - {} users present but no messages for 2+ minutes", roomId, activeUserCount);
+                    // Create a synthetic message buffer for idle engagement
+                    messageBuffers.computeIfAbsent(roomId, k -> new ConcurrentLinkedQueue<>());
+                    analyzeAndRespondForIdleEngagement(roomId);
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Room {}: Error checking idle engagement", roomId, e);
+        }
+    }
+    
+    /**
+     * Checks if message density exceeds threshold (5 messages in 3 minutes)
+     */
+    private boolean checkMessageDensity(String roomId, LocalDateTime now) {
+        try {
+            // Get recent messages from Room (not from global RedisService - that's a different key!)
+            List<ChatMessage> recentMessages = roomService.getRoomMessages(roomId);
+            logger.info("🔍 Room {}: Density check - retrieved {} total messages from Room", 
+                       roomId, recentMessages != null ? recentMessages.size() : 0);
+            
+            if (recentMessages == null || recentMessages.isEmpty()) {
+                logger.info("🔍 Room {}: No messages retrieved from Room", roomId);
+                return false;
             }
             
-            LocalDateTime now = LocalDateTime.now();
-            LocalDateTime lastResponseForRoom = lastResponses.getOrDefault(roomId, now.minusMinutes(10));
-            LocalDateTime lastLlmCallForRoom = lastLlmCalls.getOrDefault(roomId, now.minusMinutes(10));
+            // Filter messages for this room and count within time window
+            LocalDateTime threeMinutesAgo = now.minusMinutes(DENSITY_CHECK_MINUTES);
+            int messageCount = 0;
+            int totalChecked = 0;
             
-            long secondsSinceLastResponse = java.time.Duration.between(lastResponseForRoom, now).toSeconds();
-            long secondsSinceLastLlmCall = java.time.Duration.between(lastLlmCallForRoom, now).toSeconds();
+            logger.info("🔍 Room {}: Checking messages since {} (3 minutes ago)", roomId, threeMinutesAgo);
             
-            if (secondsSinceLastResponse < MIN_SECONDS_BETWEEN_RESPONSES) {
-                logger.debug("Room {}: Too soon since last response ({} sec ago, need {})", 
-                            roomId, secondsSinceLastResponse, MIN_SECONDS_BETWEEN_RESPONSES);
-                continue;
+            for (ChatMessage msg : recentMessages) {
+                totalChecked++;
+                String msgRoomId = msg.getRoomId() != null ? msg.getRoomId() : DEFAULT_ROOM;
+                boolean timeMatch = msg.getTimestamp() != null && msg.getTimestamp().isAfter(threeMinutesAgo);
+                boolean roomMatch = roomId.equals(msgRoomId);
+                boolean notAI = !"ai_master".equals(msg.getUserId()) && !"master".equals(msg.getUserId()) && !"system".equals(msg.getUserId());
+                
+                logger.info("🔍 Message #{}: content='{}', timestamp={}, room={}, userId={}, timeMatch={}, roomMatch={}, notAI={}", 
+                           totalChecked, msg.getContent(), msg.getTimestamp(), msgRoomId, msg.getUserId(), 
+                           timeMatch, roomMatch, notAI);
+                
+                if (timeMatch && roomMatch && notAI) {
+                    messageCount++;
+                    logger.info("✅ Message #{} COUNTS: '{}'", messageCount, msg.getContent());
+                }
             }
             
-            if (secondsSinceLastLlmCall < MIN_SECONDS_BETWEEN_LLM_CALLS) {
-                logger.debug("Room {}: Rate limiting: Too soon since last LLM call ({} sec ago, need {})", 
-                            roomId, secondsSinceLastLlmCall, MIN_SECONDS_BETWEEN_LLM_CALLS);
-                continue;
-            }
-            
-            logger.info("Room {}: Starting conversation analysis with {} messages (last response: {}s ago, last LLM call: {}s ago)", 
-                       roomId, buffer.size(), secondsSinceLastResponse, secondsSinceLastLlmCall);
-            analyzeAndRespond(roomId);
+            logger.info("🔍 Room {}: Final count: {} valid messages in last {} minutes (threshold: {})", 
+                       roomId, messageCount, DENSITY_CHECK_MINUTES, DENSITY_THRESHOLD_MESSAGES);
+            return messageCount >= DENSITY_THRESHOLD_MESSAGES;
+        } catch (Exception e) {
+            logger.warn("Room {}: Error checking message density", roomId, e);
+            return false;
         }
     }
     
@@ -213,6 +402,57 @@ public class MasterResponseScheduler {
     }
     
     /**
+     * Special analysis for idle engagement scenarios
+     */
+    private void analyzeAndRespondForIdleEngagement(String roomId) {
+        if (isProcessing.get()) {
+            logger.debug("Already processing, skipping idle engagement for room {}", roomId);
+            return;
+        }
+        
+        isProcessing.set(true);
+        
+        try {
+            // Get recent conversation context from Redis for idle engagement
+            List<ChatMessage> recentMessages = chatService.getRecentMessages();
+            List<ChatMessage> contextMessages = new ArrayList<>();
+            
+            // Filter for this room and get last few messages for context
+            for (ChatMessage msg : recentMessages) {
+                String msgRoomId = msg.getRoomId() != null ? msg.getRoomId() : DEFAULT_ROOM;
+                if (roomId.equals(msgRoomId)) {
+                    contextMessages.add(msg);
+                }
+            }
+            
+            // Limit to last 5 messages for context
+            if (contextMessages.size() > 5) {
+                contextMessages = contextMessages.subList(contextMessages.size() - 5, contextMessages.size());
+            }
+            
+            logger.info("Room {}: Generating idle engagement response with {} context messages", roomId, contextMessages.size());
+            
+            // Update LLM call timestamp before making the call
+            lastLlmCalls.put(roomId, LocalDateTime.now());
+            
+            // Generate proactive response
+            Optional<String> response = masterService.generateResponse(contextMessages);
+            
+            if (response.isPresent()) {
+                sendMasterResponse(response.get(), roomId);
+                updateResponseState(roomId);
+            } else {
+                logger.info("Room {}: LLM decided not to engage proactively during idle period", roomId);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Room {}: Error during idle engagement analysis", roomId, e);
+        } finally {
+            isProcessing.set(false);
+        }
+    }
+    
+    /**
      * Updates state after Master responds
      */
     private void updateResponseState(String roomId) {
@@ -222,6 +462,12 @@ public class MasterResponseScheduler {
         Queue<ChatMessage> roomBuffer = messageBuffers.get(roomId);
         if (roomBuffer != null) {
             roomBuffer.clear();
+        }
+        
+        // If this was a response during active conversation, extend conversation time
+        if (conversationActive.getOrDefault(roomId, false)) {
+            conversationStartTime.put(roomId, LocalDateTime.now());
+            logger.debug("Room {}: Conversation time extended due to master response", roomId);
         }
         
         logger.debug("Room {}: Response state updated - buffer cleared", roomId);
@@ -239,6 +485,16 @@ public class MasterResponseScheduler {
         stats.put("minSecondsBetweenResponses", MIN_SECONDS_BETWEEN_RESPONSES);
         stats.put("minSecondsBetweenLlmCalls", MIN_SECONDS_BETWEEN_LLM_CALLS);
         stats.put("totalRooms", messageBuffers.size());
+        
+        // Enhanced conversation features
+        stats.put("conversationTimeoutSeconds", CONVERSATION_TIMEOUT_SECONDS);
+        stats.put("idleMonitoringMinutes", IDLE_MONITORING_MINUTES);
+        stats.put("densityCheckMinutes", DENSITY_CHECK_MINUTES);
+        stats.put("densityThresholdMessages", DENSITY_THRESHOLD_MESSAGES);
+        
+        // Current conversation states
+        stats.put("activeConversations", conversationActive.size());
+        stats.put("conversationStates", new HashMap<>(conversationActive));
         
         // Per-room stats
         Map<String, Object> roomStats = new HashMap<>();

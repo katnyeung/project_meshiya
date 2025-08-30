@@ -127,3 +127,7 @@ When implementing additional features:
 - AI responses should maintain the contemplative Midnight Diner mood
 - WebSocket state synchronization is critical for shared experience
 - Focus on emotional context over technical complexity
+- Always keep code simple, it is a MVP project, no fallback plan is require.
+- Please remember reuse currect service, object as possible. remove unecessary code if that is not using anymore.
+- No fallback if test is failed, just tell me how to test it
+- reduce the code adding to resolve an issue, but look for the root cause, investigate, fix it before adding new code. it make the code too bulky

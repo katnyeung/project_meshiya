@@ -10,9 +10,11 @@ class UserStatusManager {
         this.lastPositionUpdate = 0;
         this.updateDebounceMap = new Map(); // seatId -> timeout ID for debouncing
         this.lastUpdateContentMap = new Map(); // seatId -> last content hash
+        this.userStatusDebounceMap = new Map(); // userId -> timeout ID for user status debouncing
         this.clientTimerInterval = null; // Client-side timer for countdown
         this.lastClientUpdate = 0;
         this.preservedTimers = new Map(); // userId -> preserved timer data for seat swaps
+        this.userLastActivity = new Map(); // userId -> timestamp of last activity
     }
 
     /**
@@ -284,6 +286,26 @@ class UserStatusManager {
         
         const { userId, roomId, seatId, consumables } = statusUpdate;
         
+        // Debounce rapid user status updates to prevent duplicate avatar creation
+        if (this.userStatusDebounceMap.has(userId)) {
+            clearTimeout(this.userStatusDebounceMap.get(userId));
+            console.log(`⏰ Debouncing rapid status update for user ${userId}`);
+        }
+        
+        const timeoutId = setTimeout(() => {
+            this.processUserStatusUpdate({ userId, roomId, seatId, consumables });
+            this.userStatusDebounceMap.delete(userId);
+        }, 50); // 50ms debounce
+        
+        this.userStatusDebounceMap.set(userId, timeoutId);
+    }
+    
+    /**
+     * Process user status update after debouncing
+     */
+    processUserStatusUpdate(statusUpdate) {
+        const { userId, roomId, seatId, consumables } = statusUpdate;
+        
         if (!seatId || seatId < 1 || seatId > 8) {
             console.warn('⚠️ Invalid seat ID in status update:', seatId);
             return;
@@ -479,9 +501,12 @@ class UserStatusManager {
         // Find and clear only the current user's old seats (not the new one they're moving to)
         this.userStatuses.forEach((statusData, seatId) => {
             if (statusData.userId === currentUserId && seatId !== newSeatId) {
-                console.log(`   - Clearing current user's old sprite from seat ${seatId}`);
+                console.log(`   - Clearing current user's old sprites from seat ${seatId}`);
                 if (window.meshiya && window.meshiya.dinerScene) {
+                    // Clear both status sprite and customer avatar for current user's old seats
                     window.meshiya.dinerScene.hideUserStatusSprite(seatId);
+                    window.meshiya.dinerScene.removeCustomerFromSeat(seatId);
+                    console.log(`   - Removed both sprites from current user's old seat ${seatId}`);
                 }
                 // Don't delete the status data - let the server handle that
             }
@@ -524,7 +549,10 @@ class UserStatusManager {
                 console.log(`   - Clearing user ${userId} from old seat ${seatId} (ghost cleanup)`);
                 this.userStatuses.delete(seatId);
                 if (window.meshiya && window.meshiya.dinerScene) {
+                    // Remove both status sprite AND customer avatar to prevent duplicates
                     window.meshiya.dinerScene.hideUserStatusSprite(seatId);
+                    window.meshiya.dinerScene.removeCustomerFromSeat(seatId);
+                    console.log(`   - Removed both status sprite and customer avatar from seat ${seatId}`);
                 }
             }
         });
@@ -555,7 +583,7 @@ class UserStatusManager {
     }
     
     /**
-     * Update client-side timers - simplified to just refresh displays
+     * Update client-side timers - simplified to just refresh displays and trigger eating states
      */
     updateClientTimers() {
         // No more client-side timer calculations - just refresh displays occasionally
@@ -565,10 +593,108 @@ class UserStatusManager {
             this.userStatuses.forEach((statusData, seatId) => {
                 if (statusData.consumables && statusData.consumables.length > 0) {
                     this.updateStatusDisplay(seatId);
+                    
+                    // Trigger eating state for users with consumables
+                    this.triggerEatingState(seatId, statusData);
                 }
             });
+            
+            // Check for idle users
+            this.checkIdleUsers();
+            
             this.lastClientUpdate = now;
         }
+    }
+    
+    /**
+     * Trigger eating image state for users with active consumables
+     */
+    triggerEatingState(seatId, statusData) {
+        if (!statusData.userId || !window.dinerScene) return;
+        
+        const consumables = statusData.consumables || [];
+        const activeConsumables = consumables.filter(c => (c.remainingSeconds || 0) > 0);
+        
+        if (activeConsumables.length > 0) {
+            // Find username from WebSocket client or other sources
+            let userName = null;
+            
+            // Check if this is the current user
+            if (window.wsClient && statusData.userId === window.wsClient.userId) {
+                userName = window.wsClient.username;
+            } else {
+                // For other users, try to get from seat states or message history
+                const seatStates = window.dinerScene.getSeatStates();
+                const seatData = seatStates.get(seatId);
+                if (seatData && seatData.userId === statusData.userId) {
+                    // Get username from customer sprite userData
+                    const customerSprite = window.dinerScene.sprites.customers[seatId - 1];
+                    if (customerSprite && customerSprite.userData) {
+                        userName = customerSprite.userData.userName;
+                    }
+                }
+            }
+            
+            if (userName) {
+                console.log(`🍽️ Triggering eating state for ${userName} at seat ${seatId} (${activeConsumables.length} active items)`);
+                
+                // Randomly trigger eating state (30% chance per timer update)
+                if (Math.random() < 0.3) {
+                    window.dinerScene.updateUserImageState(seatId, 'eating');
+                    
+                    // Return to normal after 2-4 seconds
+                    const duration = 2000 + Math.random() * 2000;
+                    setTimeout(() => {
+                        window.dinerScene.updateUserImageState(seatId, 'normal');
+                    }, duration);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Record user activity (call this from UI manager when users chat, order, etc.)
+     */
+    recordUserActivity(userId) {
+        if (userId) {
+            this.userLastActivity.set(userId, Date.now());
+            console.log(`📝 Recorded activity for user ${userId}`);
+        }
+    }
+    
+    /**
+     * Check for idle users and trigger idle state
+     */
+    checkIdleUsers() {
+        if (!window.dinerScene) return;
+        
+        const now = Date.now();
+        const idleThreshold = 60000; // 60 seconds of inactivity
+        
+        this.userStatuses.forEach((statusData, seatId) => {
+            if (statusData.userId) {
+                const lastActivity = this.userLastActivity.get(statusData.userId) || now;
+                const timeSinceActivity = now - lastActivity;
+                
+                // If user has been inactive and has no consumables
+                if (timeSinceActivity > idleThreshold && (!statusData.consumables || statusData.consumables.length === 0)) {
+                    // Randomly trigger idle state (20% chance per check)
+                    if (Math.random() < 0.2) {
+                        console.log(`😴 Triggering idle state for user at seat ${seatId} (inactive for ${Math.round(timeSinceActivity/1000)}s)`);
+                        window.dinerScene.updateUserImageState(seatId, 'idle');
+                        
+                        // Return to normal after 3-6 seconds
+                        const duration = 3000 + Math.random() * 3000;
+                        setTimeout(() => {
+                            window.dinerScene.updateUserImageState(seatId, 'normal');
+                        }, duration);
+                        
+                        // Reset activity timer to prevent constant idle triggering
+                        this.userLastActivity.set(statusData.userId, now - (idleThreshold / 2));
+                    }
+                }
+            }
+        });
     }
 
     /**

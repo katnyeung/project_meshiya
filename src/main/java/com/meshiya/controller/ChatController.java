@@ -4,6 +4,8 @@ import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
 import com.meshiya.service.ChatService;
 import com.meshiya.service.RoomTVService;
+import com.meshiya.service.AvatarStateService;
+import com.meshiya.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +25,12 @@ public class ChatController {
     
     @Autowired
     private RoomTVService roomTVService;
+    
+    @Autowired
+    private AvatarStateService avatarStateService;
+    
+    @Autowired
+    private UserService userService;
 
     @MessageMapping("/chat.sendMessage")
     @SendTo("/topic/public")
@@ -30,6 +38,31 @@ public class ChatController {
         logger.info("Received chat message: userId={}, userName={}, type={}, content={}", 
                     chatMessage.getUserId(), chatMessage.getUserName(), 
                     chatMessage.getType(), chatMessage.getContent());
+        
+        // Trigger chatting avatar state when user sends a message
+        logger.info("Chat message details: userId={}, roomId={}, seatId={}", 
+                   chatMessage.getUserId(), chatMessage.getRoomId(), chatMessage.getSeatId());
+        
+        if (chatMessage.getUserId() != null) {
+            String roomId = chatMessage.getRoomId() != null ? chatMessage.getRoomId() : "room1"; // Default room
+            Integer seatId = chatMessage.getSeatId();
+            
+            // If seatId is not in message, try to find user's current seat
+            if (seatId == null) {
+                // Get from UserService
+                seatId = userService.getUserSeat(chatMessage.getUserId());
+                logger.info("Found user {} current seat: {}", chatMessage.getUserId(), seatId);
+            }
+            
+            if (seatId != null) {
+                logger.info("Triggering avatar state for user {} in room {} seat {}", 
+                           chatMessage.getUserId(), roomId, seatId);
+                avatarStateService.recordUserActivity(chatMessage.getUserId(), roomId, seatId);
+                avatarStateService.triggerChattingState(chatMessage.getUserId(), roomId, seatId);
+            } else {
+                logger.warn("Cannot trigger avatar state - user {} not in a seat", chatMessage.getUserId());
+            }
+        }
         
         ChatMessage response = chatService.processMessage(chatMessage);
         
@@ -94,6 +127,12 @@ public class ChatController {
                     response.getUserId(), response.getUserName(), response.getSeatId(), 
                     response.getType(), response.getContent());
         
+        // Record user activity and reset avatar state when joining seat
+        if (response.getType() == MessageType.JOIN_SEAT && response.getUserId() != null && 
+            response.getRoomId() != null && response.getSeatId() != null) {
+            avatarStateService.recordUserActivity(response.getUserId(), response.getRoomId(), response.getSeatId());
+        }
+        
         // Add seat join message to chat history if successful
         if (response.getType() == MessageType.JOIN_SEAT) {
             ChatMessage historyMessage = new ChatMessage();
@@ -118,6 +157,11 @@ public class ChatController {
         logger.info("Seat leave response: userId={}, userName={}, seatId={}, type={}, content={}", 
                     response.getUserId(), response.getUserName(), response.getSeatId(), 
                     response.getType(), response.getContent());
+        
+        // Clear avatar state when leaving seat
+        if (response.getType() == MessageType.LEAVE_SEAT && response.getUserId() != null) {
+            avatarStateService.clearUserState(response.getUserId());
+        }
         
         // Add seat leave message to chat history if successful
         if (response.getType() == MessageType.LEAVE_SEAT) {

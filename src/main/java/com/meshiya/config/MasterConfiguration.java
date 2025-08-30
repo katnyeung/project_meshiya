@@ -117,6 +117,7 @@ public class MasterConfiguration {
         private ConversationContextConfig conversationContext;
         private ResponseStyleConfig responseStyle;
         private LlmParametersConfig llmParameters;
+        private ConversationManagementConfig conversationManagement;
         
         public BehaviorConfig getBehavior() { return behavior; }
         public void setBehavior(BehaviorConfig behavior) { this.behavior = behavior; }
@@ -134,6 +135,9 @@ public class MasterConfiguration {
         
         public LlmParametersConfig getLlmParameters() { return llmParameters; }
         public void setLlmParameters(LlmParametersConfig llmParameters) { this.llmParameters = llmParameters; }
+        
+        public ConversationManagementConfig getConversationManagement() { return conversationManagement; }
+        public void setConversationManagement(ConversationManagementConfig conversationManagement) { this.conversationManagement = conversationManagement; }
         
         // Backward compatibility
         public double getSilenceProbability() { 
@@ -231,5 +235,48 @@ public class MasterConfiguration {
         
         public double getFrequencyPenalty() { return frequencyPenalty; }
         public void setFrequencyPenalty(double frequencyPenalty) { this.frequencyPenalty = frequencyPenalty; }
+    }
+    
+    public static class ConversationManagementConfig {
+        private List<String> masterKeywords = new ArrayList<>();
+        private int conversationTimeoutSeconds = 60;
+        private int idleMonitoringMinutes = 2;
+        private int densityCheckMinutes = 3;
+        private int densityThresholdMessages = 5;
+        private int minSecondsBetweenResponses = 10;
+        private int minSecondsBetweenLlmCalls = 15;
+        private boolean enableSmartTriggering = true;
+        private boolean enableIdleEngagement = true;
+        private boolean enableDensityLeadership = true;
+        
+        public List<String> getMasterKeywords() { return masterKeywords; }
+        public void setMasterKeywords(List<String> masterKeywords) { this.masterKeywords = masterKeywords; }
+        
+        public int getConversationTimeoutSeconds() { return conversationTimeoutSeconds; }
+        public void setConversationTimeoutSeconds(int conversationTimeoutSeconds) { this.conversationTimeoutSeconds = conversationTimeoutSeconds; }
+        
+        public int getIdleMonitoringMinutes() { return idleMonitoringMinutes; }
+        public void setIdleMonitoringMinutes(int idleMonitoringMinutes) { this.idleMonitoringMinutes = idleMonitoringMinutes; }
+        
+        public int getDensityCheckMinutes() { return densityCheckMinutes; }
+        public void setDensityCheckMinutes(int densityCheckMinutes) { this.densityCheckMinutes = densityCheckMinutes; }
+        
+        public int getDensityThresholdMessages() { return densityThresholdMessages; }
+        public void setDensityThresholdMessages(int densityThresholdMessages) { this.densityThresholdMessages = densityThresholdMessages; }
+        
+        public int getMinSecondsBetweenResponses() { return minSecondsBetweenResponses; }
+        public void setMinSecondsBetweenResponses(int minSecondsBetweenResponses) { this.minSecondsBetweenResponses = minSecondsBetweenResponses; }
+        
+        public int getMinSecondsBetweenLlmCalls() { return minSecondsBetweenLlmCalls; }
+        public void setMinSecondsBetweenLlmCalls(int minSecondsBetweenLlmCalls) { this.minSecondsBetweenLlmCalls = minSecondsBetweenLlmCalls; }
+        
+        public boolean isEnableSmartTriggering() { return enableSmartTriggering; }
+        public void setEnableSmartTriggering(boolean enableSmartTriggering) { this.enableSmartTriggering = enableSmartTriggering; }
+        
+        public boolean isEnableIdleEngagement() { return enableIdleEngagement; }
+        public void setEnableIdleEngagement(boolean enableIdleEngagement) { this.enableIdleEngagement = enableIdleEngagement; }
+        
+        public boolean isEnableDensityLeadership() { return enableDensityLeadership; }
+        public void setEnableDensityLeadership(boolean enableDensityLeadership) { this.enableDensityLeadership = enableDensityLeadership; }
     }
 }

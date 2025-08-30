@@ -11,6 +11,7 @@ class WebSocketClient {
         this.masterStatusHandlers = [];
         this.userStatusHandlers = [];
         this.orderNotificationHandlers = [];
+        this.avatarStateHandlers = [];
     }
 
     connect(username) {
@@ -95,6 +96,18 @@ class WebSocketClient {
         this.stompClient.subscribe('/topic/room/room1/user-status', (messageOutput) => {
             console.log('Received user status update:', messageOutput.body);
             this.handleUserStatusUpdate(JSON.parse(messageOutput.body));
+        });
+        
+        // Subscribe to avatar state updates
+        this.stompClient.subscribe('/topic/room/room1/avatar-state', (messageOutput) => {
+            console.log('🎭 [WEBSOCKET] Received avatar state update:', messageOutput.body);
+            try {
+                const message = JSON.parse(messageOutput.body);
+                console.log('🎭 [WEBSOCKET] Parsed avatar state message:', message);
+                this.handleAvatarStateUpdate(message);
+            } catch (e) {
+                console.error('🎭 [WEBSOCKET] Error parsing avatar state message:', e);
+            }
         });
         
         // Subscribe to personal order notifications
@@ -193,11 +206,16 @@ class WebSocketClient {
         
         if (message.type === 'SEAT_OCCUPANCY_UPDATE' && message.occupancy) {
             // Handle full seat occupancy update
-            for (const [seatId, userId] of Object.entries(message.occupancy)) {
+            for (const [seatId, seatInfo] of Object.entries(message.occupancy)) {
+                // Handle both old format (userId string) and new format (object with userId/userName)
+                const userId = typeof seatInfo === 'string' ? seatInfo : seatInfo.userId;
+                const userName = typeof seatInfo === 'object' ? seatInfo.userName : undefined;
+                
                 const seatMessage = {
                     type: 'SEAT_STATE',
                     seatId: parseInt(seatId),
                     userId: userId,
+                    userName: userName,
                     occupied: true
                 };
                 
@@ -237,6 +255,12 @@ class WebSocketClient {
         console.log('Handling order notification:', message);
         this.notifyOrderNotificationHandlers(message);
     }
+    
+    handleAvatarStateUpdate(message) {
+        console.log('🎭 [HANDLER] Handling avatar state update:', message);
+        console.log('🎭 [HANDLER] Avatar state handlers count:', this.avatarStateHandlers.length);
+        this.notifyAvatarStateHandlers(message);
+    }
 
     // Event handler management
     onMessage(handler) {
@@ -262,6 +286,10 @@ class WebSocketClient {
     onOrderNotification(handler) {
         this.orderNotificationHandlers.push(handler);
     }
+    
+    onAvatarStateUpdate(handler) {
+        this.avatarStateHandlers.push(handler);
+    }
 
     notifyMessageHandlers(message) {
         this.messageHandlers.forEach(handler => handler(message));
@@ -285,6 +313,10 @@ class WebSocketClient {
 
     notifyOrderNotificationHandlers(message) {
         this.orderNotificationHandlers.forEach(handler => handler(message));
+    }
+    
+    notifyAvatarStateHandlers(message) {
+        this.avatarStateHandlers.forEach(handler => handler(message));
     }
 
     /**

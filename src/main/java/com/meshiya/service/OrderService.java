@@ -50,6 +50,9 @@ public class OrderService {
     private ImageGenerationService imageGenerationService;
     
     @Autowired
+    private AvatarStateService avatarStateService;
+    
+    @Autowired
     private UserService userService;
     
     // Order queue management
@@ -116,6 +119,11 @@ public class OrderService {
         // Update user activity timestamp for cleanup tracking
         userService.updateUserActivity(userId, userName, roomId);
         
+        // Record avatar activity for state management
+        if (avatarStateService != null) {
+            avatarStateService.recordUserActivity(userId, roomId, seatId);
+        }
+        
         notifyStatusChange(order, OrderStatus.ORDERED);
         
         logger.info("Order placed: {} ordered {} in room {}", userName, menuItem.get().getName(), roomId);
@@ -181,6 +189,11 @@ public class OrderService {
                     
                     // Update user activity timestamp for cleanup tracking
                     userService.updateUserActivity(userId, userName, roomId);
+                    
+                    // Record avatar activity for state management
+                    if (avatarStateService != null) {
+                        avatarStateService.recordUserActivity(userId, roomId, seatId);
+                    }
                     
                     notifyStatusChange(order, OrderStatus.ORDERED);
                     
@@ -510,8 +523,20 @@ public class OrderService {
         messagingTemplate.convertAndSendToUser(order.getUserId(), "/queue/orders", servedMessage);
         
         // Add consumable to user status (with image data if available)
-        consumableService.addConsumableWithImage(order.getUserId(), order.getRoomId(), order.getSeatId(), 
-                                                order.getMenuItem(), order.getImageData());
+        // Use user's CURRENT seat, not the order's original seat (handles seat swapping)
+        Integer currentSeat = userService.getUserSeat(order.getUserId());
+        if (currentSeat != null) {
+            logger.info("Order completion for user {} - using current seat {} instead of order seat {}", 
+                       order.getUserId(), currentSeat, order.getSeatId());
+            consumableService.addConsumableWithImage(order.getUserId(), order.getRoomId(), currentSeat, 
+                                                    order.getMenuItem(), order.getImageData());
+        } else {
+            // Fallback to order seat if user has no current seat (disconnected/left)
+            logger.warn("Order completion for user {} - no current seat found, using order seat {}", 
+                       order.getUserId(), order.getSeatId());
+            consumableService.addConsumableWithImage(order.getUserId(), order.getRoomId(), order.getSeatId(), 
+                                                    order.getMenuItem(), order.getImageData());
+        }
         
         // Update persisted orders
         persistUserOrders(order.getUserId());
