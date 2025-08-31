@@ -529,13 +529,13 @@ public class OrderService {
             logger.info("Order completion for user {} - using current seat {} instead of order seat {}", 
                        order.getUserId(), currentSeat, order.getSeatId());
             consumableService.addConsumableWithImage(order.getUserId(), order.getRoomId(), currentSeat, 
-                                                    order.getMenuItem(), order.getImageData());
+                                                    order.getMenuItem(), order.getImageUrl());
         } else {
             // Fallback to order seat if user has no current seat (disconnected/left)
             logger.warn("Order completion for user {} - no current seat found, using order seat {}", 
                        order.getUserId(), order.getSeatId());
             consumableService.addConsumableWithImage(order.getUserId(), order.getRoomId(), order.getSeatId(), 
-                                                    order.getMenuItem(), order.getImageData());
+                                                    order.getMenuItem(), order.getImageUrl());
         }
         
         // Update persisted orders
@@ -924,7 +924,7 @@ public class OrderService {
      * Send confirmation message to user when LLM order is received
      */
     private void sendOrderConfirmationMessage(String userName, String itemName) {
-        String message = String.format("%s, I'll prepare your %s. Let me create something special for you...", 
+        String message = String.format("%s, I'll prepare your %s.", 
                                      userName, itemName);
         sendMasterChatMessage(message);
     }
@@ -945,8 +945,8 @@ public class OrderService {
                 );
                 
                 if (imageData != null) {
-                    // Store the image data with the order for later use
-                    order.setImageData(imageData);
+                    // Store the image URL with the order for later use
+                    order.setImageUrl(imageData);
                     logger.info("Image generated successfully for order {} - {}", order.getOrderId(), menuItem.getName());
                 } else {
                     logger.warn("Image generation failed for order {} - {}", order.getOrderId(), menuItem.getName());

@@ -35,16 +35,52 @@ class WebSocketClient {
     }
 
     connectWithExistingSession(userId, username) {
-        this.username = username;
         this.userId = userId;
         
         console.log('Creating WebSocket connection with existing session');
-        console.log('Username:', username, 'UserID:', userId);
+        console.log('Initial username:', username, 'UserID:', userId);
         
-        // Store user data in localStorage
+        // For registered users, fetch current username from backend (single source of truth)
+        this.fetchCurrentUsernameAndConnect(username);
+    }
+
+    async fetchCurrentUsernameAndConnect(fallbackUsername) {
+        try {
+            const response = await fetch('/api/session/username');
+            const data = await response.json();
+            
+            if (data.success && data.isRegistered) {
+                // Use current username from database
+                this.username = data.username;
+                console.log('✅ Using current username from DB:', data.username);
+            } else {
+                // Not registered or no session, use fallback
+                this.username = fallbackUsername;
+                console.log('📝 Using fallback username:', fallbackUsername);
+            }
+            
+            // Store user data in localStorage
+            this.storeUserDataLocally();
+            
+            this.establishConnection();
+            
+        } catch (error) {
+            console.warn('Failed to fetch current username, using fallback:', error);
+            this.username = fallbackUsername;
+            this.storeUserDataLocally();
+            this.establishConnection();
+        }
+    }
+
+    /**
+     * Update username (called after username change in settings)
+     */
+    updateUsername(newUsername) {
+        this.username = newUsername;
+        console.log('Updated WebSocket client username to:', newUsername);
+        
+        // Update localStorage
         this.storeUserDataLocally();
-        
-        this.establishConnection();
     }
 
     establishConnection() {

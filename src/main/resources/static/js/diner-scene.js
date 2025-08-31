@@ -1093,11 +1093,15 @@ class DinerScene {
             if (callback) callback(canvas);
         };
         
-        // Set image source (base64 data)
-        if (imageData.startsWith('data:image/')) {
+        // Handle both MinIO URLs and base64 data
+        if (imageData.startsWith('http://') || imageData.startsWith('https://')) {
+            // MinIO URL
+            img.src = imageData;
+        } else if (imageData.startsWith('data:image/')) {
+            // Complete data URL
             img.src = imageData;
         } else {
-            // Assume base64 encoded PNG
+            // Legacy base64 encoded PNG
             img.src = 'data:image/png;base64,' + imageData;
         }
         
@@ -1146,10 +1150,18 @@ class DinerScene {
                 }
             };
             
-            // Set image source
-            if (consumable.imageData.startsWith('data:image/')) {
+            // Handle both MinIO URLs and base64 data
+            if (consumable.imageData && consumable.imageData.startsWith('http')) {
+                // MinIO URL (use imageData field for backward compatibility)
                 img.src = consumable.imageData;
-            } else {
+            } else if (consumable.imageUrl) {
+                // New imageUrl field
+                img.src = consumable.imageUrl;
+            } else if (consumable.imageData && consumable.imageData.startsWith('data:image/')) {
+                // Complete data URL
+                img.src = consumable.imageData;
+            } else if (consumable.imageData) {
+                // Legacy base64 encoded PNG
                 img.src = 'data:image/png;base64,' + consumable.imageData;
             }
         });
@@ -1250,7 +1262,9 @@ class DinerScene {
         if (seatIndex < 0 || seatIndex >= this.sprites.userImageBoxes.length) return;
         
         // Find all consumables with image data
-        const consumablesWithImages = consumables.filter(c => c.imageData && c.imageData.trim());
+        const consumablesWithImages = consumables.filter(c => 
+            (c.imageUrl && c.imageUrl.trim()) || (c.imageData && c.imageData.trim())
+        );
         
         if (consumablesWithImages.length === 0) {
             this.hideUserImageSprite(seatId);

@@ -14,6 +14,8 @@ import io.minio.MakeBucketArgs;
 import io.minio.PutObjectArgs;
 import io.minio.GetObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.CopyObjectArgs;
+import io.minio.CopySource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -482,12 +484,13 @@ public class UserService {
         Optional<RegisteredUser> registeredUserOpt = registeredUserRepository.findByUsername(username);
         
         if (registeredUserOpt.isPresent()) {
+            RegisteredUser user = registeredUserOpt.get();
             profile.setRegistered(true);
             
-            // Load custom image URLs
+            // Load custom image URLs using secure user key
             String[] imageTypes = {"idle", "chatting", "eating", "normal"};
             for (String imageType : imageTypes) {
-                String imageUrl = getImageUrl(username, imageType);
+                String imageUrl = getImageUrlByUserKey(user.getUserKey(), imageType);
                 if (imageUrl != null) {
                     profile.setProfileImageUrl(imageType, imageUrl);
                 }
@@ -502,13 +505,21 @@ public class UserService {
     // =====================================================
     
     /**
-     * Upload user image to MinIO
+     * Upload user image to MinIO using secure user key
      */
     public String uploadUserImage(String username, String imageType, MultipartFile file) {
         try {
+            // Get user's secure key
+            Optional<RegisteredUser> userOpt = registeredUserRepository.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                throw new RuntimeException("User not found");
+            }
+            
+            String userKey = userOpt.get().getUserKey();
             initializeBucket();
             
-            String objectName = String.format("users/%s/%s.png", username, imageType);
+            // Use secure user key instead of username in path
+            String objectName = String.format("users/%s/%s.png", userKey, imageType);
             
             minioClient.putObject(
                 PutObjectArgs.builder()
@@ -524,7 +535,7 @@ public class UserService {
             // Update user profile if exists
             updateUserProfileImage(username, imageType, imageUrl);
             
-            logger.info("Uploaded image for user {} - type: {} - URL: {}", username, imageType, imageUrl);
+            logger.info("Uploaded image for user {} (key: {}) - type: {} - URL: {}", username, userKey, imageType, imageUrl);
             return imageUrl;
             
         } catch (Exception e) {
@@ -534,11 +545,23 @@ public class UserService {
     }
     
     /**
-     * Get image URL for user
+     * Get image URL for user (legacy method - still used by profile endpoint)
      */
     public String getImageUrl(String username, String imageType) {
+        // Get user's secure key first
+        Optional<RegisteredUser> userOpt = registeredUserRepository.findByUsername(username);
+        if (userOpt.isPresent()) {
+            return getImageUrlByUserKey(userOpt.get().getUserKey(), imageType);
+        }
+        return null;
+    }
+    
+    /**
+     * Get image URL by secure user key
+     */
+    public String getImageUrlByUserKey(String userKey, String imageType) {
         try {
-            String objectName = String.format("users/%s/%s.png", username, imageType);
+            String objectName = String.format("users/%s/%s.png", userKey, imageType);
             logger.debug("Looking for image: bucket={}, object={}", bucketName, objectName);
             
             // Check if object exists
@@ -550,22 +573,29 @@ public class UserService {
             ).close();
             
             String imageUrl = String.format("%s/%s/%s", minioEndpoint, bucketName, objectName);
-            logger.info("Found image for {}/{}: {}", username, imageType, imageUrl);
+            logger.info("Found image for key {}/{}: {}", userKey, imageType, imageUrl);
             return imageUrl;
             
         } catch (Exception e) {
             // Image doesn't exist
-            logger.warn("Image not found for {}/{}: {}", username, imageType, e.getMessage());
+            logger.warn("Image not found for key {}/{}: {}", userKey, imageType, e.getMessage());
             return null;
         }
     }
     
     /**
-     * Delete user image
+     * Delete user image using secure user key
      */
     public void deleteUserImage(String username, String imageType) {
         try {
-            String objectName = String.format("users/%s/%s.png", username, imageType);
+            // Get user's secure key
+            Optional<RegisteredUser> userOpt = registeredUserRepository.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                throw new RuntimeException("User not found");
+            }
+            
+            String userKey = userOpt.get().getUserKey();
+            String objectName = String.format("users/%s/%s.png", userKey, imageType);
             
             minioClient.removeObject(
                 RemoveObjectArgs.builder()
@@ -577,7 +607,7 @@ public class UserService {
             // Update user profile to remove image URL
             updateUserProfileImage(username, imageType, null);
             
-            logger.info("Deleted image for user {} - type: {}", username, imageType);
+            logger.info("Deleted image for user {} (key: {}) - type: {}", username, userKey, imageType);
             
         } catch (Exception e) {
             logger.error("Failed to delete image for user {}: {}", username, e.getMessage());
@@ -645,6 +675,80 @@ public class UserService {
         }
     }
     
+    /**
+     * Update registered user's username
+     */
+    public RegisteredUser updateUsername(String currentUsername, String newUsername) {
+        // Validate new username
+        if (newUsername == null || newUsername.trim().isEmpty()) {
+            throw new RuntimeException("Username cannot be empty");
+        }
+        
+        newUsername = newUsername.trim();
+        
+        // Check if new username already exists (but not for current user)
+        Optional<RegisteredUser> existingUser = registeredUserRepository.findByUsername(newUsername);
+        if (existingUser.isPresent() && !existingUser.get().getUsername().equals(currentUsername)) {
+            throw new RuntimeException("Username already exists");
+        }
+        
+        // Find current user
+        Optional<RegisteredUser> currentUserOpt = registeredUserRepository.findByUsername(currentUsername);
+        if (currentUserOpt.isEmpty()) {
+            throw new RuntimeException("User not found");
+        }
+        
+        RegisteredUser user = currentUserOpt.get();
+        String oldUsername = user.getUsername();
+        
+        // Update username in database
+        user.setUsername(newUsername);
+        RegisteredUser savedUser = registeredUserRepository.save(user);
+        
+        // Update all active user profiles in Redis that match this username
+        updateAllActiveUserProfileUsernames(oldUsername, newUsername);
+        
+        // Note: Images don't need to move since they're stored by userKey, not username
+        logger.info("Username updated from '{}' to '{}' (images remain secure with userKey)", oldUsername, newUsername);
+        return savedUser;
+    }
+    
+    /**
+     * Update username in all active user profiles in Redis
+     */
+    private void updateAllActiveUserProfileUsernames(String oldUsername, String newUsername) {
+        Set<String> profileKeys = redisTemplate.keys(USER_PROFILE_KEY_PREFIX + "*");
+        if (profileKeys != null) {
+            int updatedCount = 0;
+            String updatedUserId = null;
+            
+            for (String key : profileKeys) {
+                try {
+                    UserProfile profile = getUserProfile(key.substring(USER_PROFILE_KEY_PREFIX.length()));
+                    if (profile != null && oldUsername.equals(profile.getUserName())) {
+                        profile.setUserName(newUsername);
+                        saveUserProfile(profile);
+                        updatedCount++;
+                        updatedUserId = profile.getUserId();
+                        logger.debug("Updated Redis profile for user session: {}", profile.getUserId());
+                    }
+                } catch (Exception e) {
+                    logger.warn("Error updating profile username for key {}: {}", key, e.getMessage());
+                }
+            }
+            logger.info("Updated {} Redis user profiles with new username '{}'", updatedCount, newUsername);
+            
+            // Also update seat data if user is seated
+            if (updatedUserId != null) {
+                try {
+                    seatService.updateUserNameInSeatData(updatedUserId, newUsername);
+                } catch (Exception e) {
+                    logger.warn("Error updating seat data username for user {}: {}", updatedUserId, e.getMessage());
+                }
+            }
+        }
+    }
+
     /**
      * Secure password hashing using BCrypt
      */

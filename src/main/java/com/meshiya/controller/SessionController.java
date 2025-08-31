@@ -331,6 +331,118 @@ public class SessionController {
         }
     }
     
+    /**
+     * Update username for logged in user
+     */
+    @PutMapping("/api/profile/username")
+    @Operation(summary = "Update username", description = "Update the username for the currently logged in user")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Username updated successfully"),
+        @ApiResponse(responseCode = "400", description = "Invalid username or validation failed"),
+        @ApiResponse(responseCode = "401", description = "User not logged in"),
+        @ApiResponse(responseCode = "409", description = "Username already exists"),
+        @ApiResponse(responseCode = "500", description = "Update failed")
+    })
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> updateUsername(
+            @Parameter(description = "New username data") @RequestBody Map<String, String> usernameData,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        
+        Map<String, Object> responseBody = new HashMap<>();
+        
+        try {
+            String currentUsername = getLoggedInUsername(request);
+            if (currentUsername == null) {
+                responseBody.put("success", false);
+                responseBody.put("message", "No active login session");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(responseBody);
+            }
+            
+            String newUsername = usernameData.get("username");
+            if (newUsername == null || newUsername.trim().isEmpty()) {
+                responseBody.put("success", false);
+                responseBody.put("message", "New username is required");
+                return ResponseEntity.badRequest().body(responseBody);
+            }
+            
+            newUsername = newUsername.trim();
+            
+            // Validate username length
+            if (newUsername.length() < 3 || newUsername.length() > 50) {
+                responseBody.put("success", false);
+                responseBody.put("message", "Username must be between 3 and 50 characters");
+                return ResponseEntity.badRequest().body(responseBody);
+            }
+            
+            // Update username in database and Redis
+            RegisteredUser updatedUser = userService.updateUsername(currentUsername, newUsername);
+            
+            // Update login cookie with new username
+            Cookie loginCookie = new Cookie("meshiyaLoggedIn", newUsername);
+            loginCookie.setMaxAge(24 * 60 * 60); // 24 hours
+            loginCookie.setPath("/");
+            response.addCookie(loginCookie);
+            
+            responseBody.put("success", true);
+            responseBody.put("message", "Username updated successfully");
+            responseBody.put("username", updatedUser.getUsername());
+            
+            logger.info("Username updated for user: {} -> {}", currentUsername, newUsername);
+            return ResponseEntity.ok(responseBody);
+            
+        } catch (RuntimeException e) {
+            logger.warn("Username update failed: {}", e.getMessage());
+            responseBody.put("success", false);
+            responseBody.put("message", e.getMessage());
+            
+            // Return 409 for username already exists, 400 for other validation errors
+            if (e.getMessage().contains("already exists")) {
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(responseBody);
+            } else {
+                return ResponseEntity.badRequest().body(responseBody);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Username update error: {}", e.getMessage());
+            responseBody.put("success", false);
+            responseBody.put("message", "Username update failed. Please try again.");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(responseBody);
+        }
+    }
+    
+    /**
+     * Get current username for session (for WebSocket connection)
+     */
+    @GetMapping("/api/session/username")
+    @Operation(summary = "Get session username", description = "Get the current username for the logged-in session")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getSessionUsername(HttpServletRequest request) {
+        Map<String, Object> responseBody = new HashMap<>();
+        
+        try {
+            String username = getLoggedInUsername(request);
+            
+            if (username != null && userService.isUserRegistered(username)) {
+                responseBody.put("success", true);
+                responseBody.put("username", username);
+                responseBody.put("isRegistered", true);
+                return ResponseEntity.ok(responseBody);
+            } else {
+                responseBody.put("success", false);
+                responseBody.put("isRegistered", false);
+                responseBody.put("message", "No registered user session found");
+                return ResponseEntity.ok(responseBody); // Still 200, just not logged in
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error getting session username: {}", e.getMessage());
+            responseBody.put("success", false);
+            responseBody.put("message", "Failed to get session username");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(responseBody);
+        }
+    }
+    
     // Helper method to get logged in username
     private String getLoggedInUsername(HttpServletRequest request) {
         if (request.getCookies() != null) {

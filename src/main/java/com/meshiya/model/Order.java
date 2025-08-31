@@ -14,7 +14,7 @@ public class Order {
     private LocalDateTime estimatedReadyTime;
     private LocalDateTime servedTime;
     private Integer seatId;
-    private String imageData; // Base64 encoded image data for generated food images
+    private String imageUrl; // MinIO URL for generated food images
     
     // Constructors
     public Order() {}
@@ -65,8 +65,8 @@ public class Order {
     public String getRoomId() { return roomId; }
     public void setRoomId(String roomId) { this.roomId = roomId; }
     
-    public String getImageData() { return imageData; }
-    public void setImageData(String imageData) { this.imageData = imageData; }
+    public String getImageUrl() { return imageUrl; }
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
     
     @Override
     public String toString() {

@@ -6,15 +6,21 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.minio.MinioClient;
+import io.minio.GetObjectArgs;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -30,6 +36,12 @@ public class ImageController {
     
     @Autowired
     private UserService userService;
+    
+    @Autowired
+    private MinioClient minioClient;
+    
+    @Value("${minio.bucket.food-images:meshiya-food-images}")
+    private String foodImagesBucket;
     
     /**
      * Upload user image
@@ -288,6 +300,45 @@ public class ImageController {
         }
         
         return null;
+    }
+    
+    /**
+     * Serve food images from MinIO (proxy endpoint)
+     */
+    @GetMapping("/food/{type}/{fileName}")
+    @Operation(summary = "Get food image", description = "Serve generated food images from MinIO storage")
+    public ResponseEntity<byte[]> getFoodImage(
+            @Parameter(description = "Food type (food, drink, dessert)") @PathVariable String type,
+            @Parameter(description = "Image filename") @PathVariable String fileName) {
+        
+        try {
+            String objectKey = String.format("food/%s/%s", type.toLowerCase(), fileName);
+            logger.debug("Serving food image: {}", objectKey);
+            
+            // Get image from MinIO
+            try (InputStream inputStream = minioClient.getObject(
+                GetObjectArgs.builder()
+                    .bucket(foodImagesBucket)
+                    .object(objectKey)
+                    .build())) {
+                
+                byte[] imageBytes = inputStream.readAllBytes();
+                
+                // Set appropriate headers
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.IMAGE_PNG);
+                headers.setContentLength(imageBytes.length);
+                headers.setCacheControl("public, max-age=3600"); // Cache for 1 hour
+                
+                logger.debug("Served food image: {} ({} bytes)", objectKey, imageBytes.length);
+                return new ResponseEntity<>(imageBytes, headers, HttpStatus.OK);
+                
+            }
+            
+        } catch (Exception e) {
+            logger.warn("Food image not found or error serving: food/{}/{} - {}", type, fileName, e.getMessage());
+            return ResponseEntity.notFound().build();
+        }
     }
     
     /**
