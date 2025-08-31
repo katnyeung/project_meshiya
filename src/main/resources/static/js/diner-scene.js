@@ -774,6 +774,8 @@ class DinerScene {
     addCustomerToSeat(seatNumber, isCurrentUser = false, userId = null, userName = null) {
         // Remove any existing customer sprite for this seat
         this.removeCustomerFromSeat(seatNumber);
+        // Also remove any existing username box
+        this.removeUsernameBox(seatNumber);
         
         // Create new customer sprite with user info
         const customerSprite = this.createCustomerSprite(seatNumber, isCurrentUser, userId, userName);
@@ -786,6 +788,16 @@ class DinerScene {
         if (existingCustomer) {
             this.scene.remove(existingCustomer);
             this.sprites.customers[seatNumber - 1] = null;
+        }
+    }
+    
+    removeUsernameBox(seatNumber) {
+        const seatIndex = seatNumber - 1;
+        if (seatIndex >= 0 && seatIndex < this.sprites.usernameBoxes.length) {
+            const usernameSprite = this.sprites.usernameBoxes[seatIndex];
+            if (usernameSprite) {
+                usernameSprite.visible = false;
+            }
         }
     }
 
@@ -825,6 +837,8 @@ class DinerScene {
             
             // Remove customer avatar
             this.removeCustomerFromSeat(seatNumber);
+            // Also remove username box
+            this.removeUsernameBox(seatNumber);
             
             // Clear user status sprite for this seat when user leaves
             this.hideUserStatusSprite(seatNumber);
@@ -844,6 +858,7 @@ class DinerScene {
             } else {
                 this.updateSeatState(seatNumber, false, false);
                 this.removeCustomerFromSeat(seatNumber);
+                this.removeUsernameBox(seatNumber);
             }
         }
     }
@@ -960,9 +975,9 @@ class DinerScene {
             const usernameMaterial = new THREE.SpriteMaterial({ map: usernameTexture, transparent: true });
             const usernameSprite = new THREE.Sprite(usernameMaterial);
             
-            // Position username box below image box
+            // Position username box below avatar
             if (seat) {
-                usernameSprite.position.set(seat.position.x, seat.position.y + 1.2, 3);
+                usernameSprite.position.set(seat.position.x, seat.position.y - 0.5, 3);
                 usernameSprite.scale.set(1.5, 0.4, 1);
             }
             usernameSprite.visible = false; // Initially hidden
