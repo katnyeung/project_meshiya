@@ -2,6 +2,27 @@ server:
   port: 8080
 
 spring:
+  # Database Configuration
+  datasource:
+    url: jdbc:mariadb://localhost:3306/meshiya
+    driver-class-name: org.mariadb.jdbc.Driver
+    username: root
+    password:
+  
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MariaDBDialect
+  
+  # H2 Console (for development)
+  h2:
+    console:
+      enabled: true
+  
   data:
     redis:
       host: localhost
@@ -10,6 +31,12 @@ spring:
   
   websocket:
     allowed-origins: "http://localhost:3000,http://127.0.0.1:3000"
+    
+  # File Upload Configuration
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
 
 meshiya:
   diner:
@@ -20,6 +47,13 @@ meshiya:
     timeout:
       minutes: 10  # Users will be logged out after 10 minutes of inactivity
 
+# MinIO Configuration
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key:
+  bucket: meshiya-user-images
+
 # Image Generation Configuration
 image:
   generation:
@@ -29,6 +63,15 @@ image:
   storage:
     path: /static/assets/generated  # Where to store generated images
 
+# TTS Configuration  
+tts:
+  api:
+    url: ${TTS_API_URL:http://localhost:8000/tts}  # TTS service endpoint
+    timeout: 10000  # Timeout for TTS requests in milliseconds
+  voice:
+    default: ${TTS_DEFAULT_VOICE:am_michael}  # Default voice for Master responses
+  enabled: ${TTS_ENABLED:true}  # Enable/disable TTS functionality
+
 # LLM Configuration
 llm:
   # Chat/Conversation configuration - Switchable providers
@@ -36,6 +79,7 @@ llm:
     provider: perplexity  # Options: perplexity, openai, ollama
     api:
       url: https://api.perplexity.ai/chat/completions
+      key: ${PERPLEXITY_API_KEY:pplx-}  # Set your API key here or in environment
     model: sonar  # Provider-specific model name
     timeout: 30000
 
@@ -44,6 +88,7 @@ llm:
     provider: perplexity  # Options: perplexity, openai, ollama
     api:
       url: https://api.perplexity.ai/chat/completions
+      key: ${PERPLEXITY_API_KEY:pplx-}  # Set your API key here or in environment
     model: sonar  # Provider-specific model name
     timeout: 15000
 

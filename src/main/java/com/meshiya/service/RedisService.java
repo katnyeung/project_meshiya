@@ -65,6 +65,30 @@ public class RedisService {
     }
     
     /**
+     * Gets the count of active users (seated users)
+     */
+    public int getActiveUserCount() {
+        Map<Object, Object> rawSeats = redisTemplate.opsForHash().entries(SEAT_KEY);
+        return rawSeats.size();
+    }
+    
+    /**
+     * Gets list of active user IDs
+     */
+    public List<String> getActiveUserIds() {
+        Map<Object, Object> rawSeats = redisTemplate.opsForHash().entries(SEAT_KEY);
+        List<String> userIds = new ArrayList<>();
+        
+        for (Object userId : rawSeats.values()) {
+            if (userId != null) {
+                userIds.add(userId.toString());
+            }
+        }
+        
+        return userIds;
+    }
+    
+    /**
      * Message History Management
      */
     public void addMessage(ChatMessage message) {

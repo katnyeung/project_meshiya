@@ -2,6 +2,7 @@ package com.meshiya.service;
 
 import com.meshiya.model.Room;
 import com.meshiya.dto.ChatMessage;
+import com.meshiya.dto.UserProfile;
 import com.meshiya.model.MessageType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,11 +10,14 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -30,7 +34,14 @@ public class RoomService {
     private SimpMessagingTemplate messagingTemplate;
     
     @Autowired
+    @Lazy
+    private UserService userService;
+    
+    @Autowired
     private ConsumableService consumableService;
+    
+    @Autowired
+    private TTSService ttsService;
     
     private final ObjectMapper objectMapper;
     
@@ -39,49 +50,57 @@ public class RoomService {
         this.objectMapper.registerModule(new JavaTimeModule());
     }
     
+    // Startup logic removed - now handled by scheduler
+    
     /**
-     * Initialize Room1 at startup - always ensures room exists
+     * Initialize room with default setup - generic for any room
      */
-    public void initializeRoom1() {
-        String roomId = "room1";
+    public void initializeRoom(String roomId, String roomName, String masterName, String welcomeMessage) {
         Room room = getRoom(roomId);
         
         if (room == null) {
-            room = new Room(roomId, "Midnight Diner - Main Room");
+            room = new Room(roomId, roomName);
             
             // Add Master welcome message
-            ChatMessage welcomeMessage = new ChatMessage();
-            welcomeMessage.setType(MessageType.AI_MESSAGE);
-            welcomeMessage.setUserName("Master");
-            welcomeMessage.setUserId("master");
-            welcomeMessage.setContent("Welcome to my midnight diner. The night is long, and there's always time for a good conversation.");
-            welcomeMessage.setTimestamp(LocalDateTime.now());
+            ChatMessage welcome = new ChatMessage();
+            welcome.setType(MessageType.AI_MESSAGE);
+            welcome.setUserName(masterName);
+            welcome.setUserId("master");
+            welcome.setContent(welcomeMessage);
+            welcome.setTimestamp(LocalDateTime.now());
             
-            room.addMessage(welcomeMessage);
+            room.addMessage(welcome);
             saveRoom(room);
             
-            logger.info("Initialized Room1 with Master welcome message");
+            logger.info("Initialized room {} ({}) with master welcome message", roomId, roomName);
         } else {
             // Verify room is actually valid and accessible
             try {
                 room.getMessages(); // Test access
-                logger.info("Room1 already exists with {} messages and {} occupied seats", 
-                           room.getMessages().size(), room.getSeatOccupancy().size());
+                logger.info("Room {} already exists with {} messages", roomId, room.getMessages().size());
             } catch (Exception e) {
-                logger.warn("Room1 exists but is corrupted, reinitializing: {}", e.getMessage());
+                logger.warn("Room {} exists but is corrupted, reinitializing: {}", roomId, e.getMessage());
                 // Reinitialize corrupted room
-                room = new Room(roomId, "Midnight Diner - Main Room");
-                ChatMessage welcomeMessage = new ChatMessage();
-                welcomeMessage.setType(MessageType.AI_MESSAGE);
-                welcomeMessage.setUserName("Master");
-                welcomeMessage.setUserId("master");
-                welcomeMessage.setContent("Welcome to my midnight diner. The night is long, and there's always time for a good conversation.");
-                welcomeMessage.setTimestamp(LocalDateTime.now());
-                room.addMessage(welcomeMessage);
+                room = new Room(roomId, roomName);
+                ChatMessage welcome = new ChatMessage();
+                welcome.setType(MessageType.AI_MESSAGE);
+                welcome.setUserName(masterName);
+                welcome.setUserId("master");
+                welcome.setContent(welcomeMessage);
+                welcome.setTimestamp(LocalDateTime.now());
+                room.addMessage(welcome);
                 saveRoom(room);
-                logger.info("Reinitialized corrupted Room1");
+                logger.info("Reinitialized corrupted room {}", roomId);
             }
         }
+    }
+    
+    /**
+     * Initialize Room1 at startup - backward compatibility
+     */
+    public void initializeRoom1() {
+        initializeRoom("room1", "Midnight Diner - Main Room", "Master", 
+                      "Welcome to my midnight diner. The night is long, and there's always time for a good conversation.");
     }
     
     /**
@@ -113,107 +132,35 @@ public class RoomService {
     }
     
     /**
-     * Add message to room and broadcast - creates room if it doesn't exist
+     * Add message to room and broadcast - room must exist
      */
     public void addMessageToRoom(String roomId, ChatMessage message) {
         Room room = getRoom(roomId);
         if (room == null) {
-            logger.warn("Room {} does not exist, initializing it", roomId);
-            if ("room1".equals(roomId)) {
-                initializeRoom1();
-                room = getRoom(roomId);
-            } else {
-                logger.error("Cannot auto-create room other than room1: {}", roomId);
-                return;
-            }
+            logger.error("Room {} does not exist - cannot add message. Create room first.", roomId);
+            return;
         }
         
-        if (room != null) {
-            room.addMessage(message);
-            saveRoom(room);
-            
-            // Broadcast to all users in the room
-            messagingTemplate.convertAndSend("/topic/room/" + roomId, message);
-            logger.info("Added message to {} and broadcast: {}", roomId, message.getContent());
-        }
-    }
-    
-    /**
-     * Join seat in room - creates room if it doesn't exist
-     */
-    public boolean joinSeat(String roomId, Integer seatId, String userId) {
-        Room room = getRoom(roomId);
-        if (room == null) {
-            logger.warn("Room {} does not exist for seat join, initializing it", roomId);
-            if ("room1".equals(roomId)) {
-                initializeRoom1();
-                room = getRoom(roomId);
-            } else {
-                logger.error("Cannot auto-create room other than room1: {}", roomId);
-                return false;
-            }
-        }
+        room.addMessage(message);
+        saveRoom(room);
         
-        if (room == null) {
-            logger.error("Failed to initialize room {}", roomId);
-            return false;
-        }
-        
-        if (room.isSeatOccupied(seatId)) {
-            logger.info("Seat {} is already occupied in room {}", seatId, roomId);
-            return false;
-        }
-        
-        // Remove user from previous seat if they had one
-        Integer previousSeat = room.getUserSeat(userId);
-        if (previousSeat != null) {
-            logger.info("User {} moving from seat {} to seat {} in room {}", userId, previousSeat, seatId, roomId);
-            room.freeSeat(previousSeat);
-            
-            // Transfer consumables to new seat (since consumables now follow user)
-            consumableService.transferConsumablesOnSeatChange(userId, roomId, previousSeat, seatId);
+        // Handle AI messages differently - wait for TTS before broadcasting
+        if (message.getType() == MessageType.AI_MESSAGE) {
+            message.setRoomId(roomId); // Ensure roomId is set for TTS broadcasting
+            ttsService.processAIMessageForTTSWithCallback(message, () -> {
+                // Broadcast after TTS is ready
+                messagingTemplate.convertAndSend("/topic/room/" + roomId, message);
+                logger.info("AI message broadcast after TTS ready: {}", message.getContent());
+            });
         } else {
-            // User joining for first time or rejoining after disconnect
-            logger.info("User {} joining seat {} in room {} (new or reconnecting)", userId, seatId, roomId);
-            
-            // Restore user's consumables when they rejoin
-            consumableService.restoreUserConsumables(userId, roomId, seatId);
+            // Broadcast other message types immediately
+            messagingTemplate.convertAndSend("/topic/room/" + roomId, message);
         }
         
-        room.occupySeat(seatId, userId);
-        saveRoom(room);
-        
-        // Broadcast seat update
-        broadcastSeatUpdate(roomId, room.getSeatOccupancy());
-        logger.info("User {} joined seat {} in room {} (consumables restored)", userId, seatId, roomId);
-        return true;
+        logger.info("Added message to {} and broadcast: {}", roomId, message.getContent());
     }
     
-    /**
-     * Leave seat in room
-     */
-    public boolean leaveSeat(String roomId, String userId) {
-        Room room = getRoom(roomId);
-        if (room == null) {
-            return false;
-        }
-        
-        Integer seatId = room.getUserSeat(userId);
-        if (seatId == null) {
-            return false;
-        }
-        
-        // Clear user's consumables when leaving seat
-        consumableService.clearUserConsumables(userId, roomId, seatId);
-        
-        room.freeSeat(seatId);
-        saveRoom(room);
-        
-        // Broadcast seat update
-        broadcastSeatUpdate(roomId, room.getSeatOccupancy());
-        logger.info("User {} left seat {} in room {}", userId, seatId, roomId);
-        return true;
-    }
+    // Seat operations removed - now handled by SeatService
     
     /**
      * Get all messages for a room (for new users)
@@ -223,56 +170,84 @@ public class RoomService {
         return room != null ? room.getMessages() : List.of();
     }
     
-    /**
-     * Get seat occupancy for a room
-     */
-    public Map<Integer, String> getRoomSeatOccupancy(String roomId) {
-        Room room = getRoom(roomId);
-        return room != null ? room.getSeatOccupancy() : Map.of();
-    }
+    // Seat occupancy removed - now handled by SeatService
+    
+    // Seat broadcasting removed - now handled by SeatService
     
     /**
-     * Broadcast seat occupancy update to all users in room
-     */
-    private void broadcastSeatUpdate(String roomId, Map<Integer, String> seatOccupancy) {
-        Map<String, Object> seatUpdate = Map.of(
-            "type", "SEAT_OCCUPANCY_UPDATE",
-            "roomId", roomId,
-            "occupancy", seatOccupancy
-        );
-        messagingTemplate.convertAndSend("/topic/room/" + roomId + "/seats", seatUpdate);
-    }
-    
-    /**
-     * Send initial room state to a user - creates room if it doesn't exist
+     * Send initial room state to a user - room must exist
      */
     public void sendInitialRoomState(String roomId, String userId) {
         Room room = getRoom(roomId);
         if (room == null) {
-            logger.warn("Room {} does not exist for initial state, initializing it", roomId);
-            if ("room1".equals(roomId)) {
-                initializeRoom1();
-                room = getRoom(roomId);
-            } else {
-                logger.error("Cannot auto-create room other than room1: {}", roomId);
-                return;
-            }
-        }
-        
-        if (room == null) {
-            logger.error("Failed to initialize room {} for initial state", roomId);
+            logger.error("Room {} does not exist - cannot send initial state. Create room first.", roomId);
             return;
         }
         
-        logger.info("Sending initial state for room {} to user {}: {} messages, {} occupied seats", 
-                   roomId, userId, room.getMessages().size(), room.getSeatOccupancy().size());
+        // Only send recent relevant messages to avoid flooding and lag
+        List<ChatMessage> recentMessages = getRecentRelevantMessages(room.getMessages());
         
-        // Send all messages
-        for (ChatMessage message : room.getMessages()) {
+        logger.info("Sending initial state for room {} to user {}: {} recent messages (filtered from {} total)", 
+                   roomId, userId, recentMessages.size(), room.getMessages().size());
+        
+        // Send only recent relevant messages
+        for (ChatMessage message : recentMessages) {
             messagingTemplate.convertAndSend("/topic/room/" + roomId, message);
         }
         
-        // Send seat occupancy
-        broadcastSeatUpdate(roomId, room.getSeatOccupancy());
+        // Note: Seat occupancy broadcasting now handled by SeatService
+    }
+    
+    /**
+     * Filter messages to send only recent relevant ones to new users
+     * This prevents message flooding and UI jitter when users join/refresh
+     */
+    private List<ChatMessage> getRecentRelevantMessages(List<ChatMessage> allMessages) {
+        if (allMessages == null || allMessages.isEmpty()) {
+            return List.of();
+        }
+        
+        // Get current time for filtering
+        java.time.LocalDateTime cutoffTime = java.time.LocalDateTime.now().minusMinutes(10);
+        
+        List<ChatMessage> filtered = new ArrayList<>();
+        
+        for (ChatMessage message : allMessages) {
+            // Always include chat messages and Master responses (important content)
+            if (message.getType() == MessageType.CHAT_MESSAGE || 
+                message.getType() == MessageType.AI_MESSAGE) {
+                
+                // Only include if recent (last 10 minutes)
+                if (isRecentMessage(message, cutoffTime)) {
+                    filtered.add(message);
+                }
+            }
+            // Skip most SYSTEM_MESSAGE types (entered/left diner, seat changes) 
+            // as they're not essential for new users and cause flooding
+        }
+        
+        // Limit to last 10 messages maximum to prevent overload
+        if (filtered.size() > 10) {
+            filtered = filtered.subList(filtered.size() - 10, filtered.size());
+        }
+        
+        return filtered;
+    }
+    
+    /**
+     * Check if message is recent enough to send to new users
+     */
+    private boolean isRecentMessage(ChatMessage message, java.time.LocalDateTime cutoffTime) {
+        try {
+            if (message.getTimestamp() != null) {
+                // Compare LocalDateTime directly
+                return message.getTimestamp().isAfter(cutoffTime);
+            }
+        } catch (Exception e) {
+            logger.warn("Error comparing message timestamp, including message anyway: {}", e.getMessage());
+        }
+        
+        // If timestamp parsing fails, include the message to be safe
+        return true;
     }
 }

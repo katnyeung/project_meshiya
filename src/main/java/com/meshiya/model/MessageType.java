@@ -19,5 +19,6 @@ public enum MessageType {
     VIDEO_SYNC,          // Periodic sync broadcast
     VIDEO_PAUSE,         // User pauses locally
     VIDEO_STOP,          // User stops locally
-    VIDEO_COMPLETE       // Video ends
+    VIDEO_COMPLETE,      // Video ends
+    AVATAR_STATE_UPDATE  // Avatar state change (idle, chatting, eating, normal)
 }

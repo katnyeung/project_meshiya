@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - Meshiya Midnight Diner</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* Additional styles for settings page */
+        .settings-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: rgba(30, 20, 10, 0.9);
+            border-radius: 10px;
+            color: #f4d03f;
+            margin-top: 50px;
+        }
+        
+        .settings-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .profile-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(40, 30, 20, 0.8);
+            border-radius: 8px;
+        }
+        
+        .image-upload-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .image-upload-item {
+            text-align: center;
+            padding: 15px;
+            background: rgba(50, 40, 30, 0.9);
+            border-radius: 8px;
+            border: 2px dashed #8b6914;
+        }
+        
+        .image-preview {
+            width: 120px;
+            height: 120px;
+            background: #2c1810;
+            border: 2px solid #8b6914;
+            border-radius: 8px;
+            margin: 0 auto 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .image-preview img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: cover;
+        }
+        
+        .image-type-title {
+            font-weight: bold;
+            color: #f4d03f;
+            margin-bottom: 10px;
+            text-transform: capitalize;
+        }
+        
+        .upload-btn {
+            background: #8b6914;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 12px;
+        }
+        
+        .upload-btn:hover {
+            background: #a67c00;
+        }
+        
+        .delete-btn {
+            background: #8b1414;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 12px;
+        }
+        
+        .delete-btn:hover {
+            background: #a01717;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .back-btn {
+            background: #6b4e1a;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .back-btn:hover {
+            background: #8b6914;
+        }
+        
+        .logout-btn {
+            background: #8b1414;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            float: right;
+        }
+        
+        .logout-btn:hover {
+            background: #a01717;
+        }
+        
+        .status-message {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            text-align: center;
+            display: none;
+        }
+        
+        .status-success {
+            background: rgba(34, 139, 34, 0.8);
+            color: white;
+        }
+        
+        .status-error {
+            background: rgba(139, 34, 34, 0.8);
+            color: white;
+        }
+        
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="settings-container">
+        <div class="settings-header">
+            <h1>User Settings</h1>
+            <p>Customize your Meshiya experience</p>
+            <a href="/" class="back-btn">← Back to Diner</a>
+            <button id="logout-btn" class="logout-btn">Logout</button>
+        </div>
+        
+        <div id="status-message" class="status-message"></div>
+        
+        <!-- Profile Information -->
+        <div class="profile-section">
+            <h2>Profile Information</h2>
+            <p><strong>Username:</strong> <span id="username-display">Loading...</span></p>
+            <p><strong>Account Type:</strong> <span id="account-type">Registered User</span></p>
+        </div>
+        
+        <!-- Image Upload Section -->
+        <div class="profile-section">
+            <h2>Custom Images</h2>
+            <p>Upload custom images for different user states. Images will be displayed in the diner when other users see you.</p>
+            <p><small>Supported formats: PNG, JPG, GIF. Maximum size: 10MB.</small></p>
+            
+            <div class="image-upload-section">
+                <!-- Idle State -->
+                <div class="image-upload-item">
+                    <div class="image-type-title">Idle</div>
+                    <div class="image-preview" id="idle-preview">
+                        <span>No image</span>
+                    </div>
+                    <input type="file" id="idle-input" class="file-input" accept="image/*">
+                    <button class="upload-btn" onclick="document.getElementById('idle-input').click()">Upload</button>
+                    <button class="delete-btn" id="idle-delete" onclick="deleteImage('idle')" style="display:none;">Delete</button>
+                </div>
+                
+                <!-- Chatting State -->
+                <div class="image-upload-item">
+                    <div class="image-type-title">Chatting</div>
+                    <div class="image-preview" id="chatting-preview">
+                        <span>No image</span>
+                    </div>
+                    <input type="file" id="chatting-input" class="file-input" accept="image/*">
+                    <button class="upload-btn" onclick="document.getElementById('chatting-input').click()">Upload</button>
+                    <button class="delete-btn" id="chatting-delete" onclick="deleteImage('chatting')" style="display:none;">Delete</button>
+                </div>
+                
+                <!-- Eating State -->
+                <div class="image-upload-item">
+                    <div class="image-type-title">Eating</div>
+                    <div class="image-preview" id="eating-preview">
+                        <span>No image</span>
+                    </div>
+                    <input type="file" id="eating-input" class="file-input" accept="image/*">
+                    <button class="upload-btn" onclick="document.getElementById('eating-input').click()">Upload</button>
+                    <button class="delete-btn" id="eating-delete" onclick="deleteImage('eating')" style="display:none;">Delete</button>
+                </div>
+                
+                <!-- Normal State -->
+                <div class="image-upload-item">
+                    <div class="image-type-title">Normal</div>
+                    <div class="image-preview" id="normal-preview">
+                        <span>No image</span>
+                    </div>
+                    <input type="file" id="normal-input" class="file-input" accept="image/*">
+                    <button class="upload-btn" onclick="document.getElementById('normal-input').click()">Upload</button>
+                    <button class="delete-btn" id="normal-delete" onclick="deleteImage('normal')" style="display:none;">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Settings page functionality
+        class SettingsManager {
+            constructor() {
+                this.imageTypes = ['idle', 'chatting', 'eating', 'normal'];
+                this.init();
+            }
+
+            init() {
+                console.log('Initializing Settings Manager...');
+                this.setupEventListeners();
+                this.loadUserProfile();
+                this.checkLoginStatus();
+            }
+
+            setupEventListeners() {
+                // File input change handlers
+                this.imageTypes.forEach(imageType => {
+                    const input = document.getElementById(`${imageType}-input`);
+                    if (input) {
+                        input.addEventListener('change', (e) => this.handleFileSelect(e, imageType));
+                    }
+                });
+
+                // Logout button
+                const logoutBtn = document.getElementById('logout-btn');
+                if (logoutBtn) {
+                    logoutBtn.addEventListener('click', () => this.logout());
+                }
+            }
+
+            async checkLoginStatus() {
+                try {
+                    const response = await fetch('/api/profile');
+                    const data = await response.json();
+                    
+                    if (!data.success || !data.isLoggedIn) {
+                        // User not logged in, redirect to home
+                        window.location.href = '/';
+                        return;
+                    }
+                    
+                    // Update username display
+                    document.getElementById('username-display').textContent = data.username;
+                    
+                    // Load existing images
+                    if (data.images) {
+                        this.loadExistingImages(data.images);
+                    }
+                    
+                } catch (error) {
+                    console.error('Failed to check login status:', error);
+                    this.showMessage('Failed to load profile information', 'error');
+                }
+            }
+
+            async loadUserProfile() {
+                try {
+                    const response = await fetch('/api/profile');
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.isLoggedIn) {
+                            document.getElementById('username-display').textContent = data.username;
+                            
+                            if (data.images) {
+                                this.loadExistingImages(data.images);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to load user profile:', error);
+                }
+            }
+
+            loadExistingImages(images) {
+                this.imageTypes.forEach(imageType => {
+                    if (images[imageType]) {
+                        this.displayImage(imageType, images[imageType]);
+                    }
+                });
+            }
+
+            displayImage(imageType, imageUrl) {
+                const preview = document.getElementById(`${imageType}-preview`);
+                const deleteBtn = document.getElementById(`${imageType}-delete`);
+                
+                if (preview) {
+                    preview.innerHTML = `<img src="${imageUrl}" alt="${imageType} image">`;
+                }
+                
+                if (deleteBtn) {
+                    deleteBtn.style.display = 'inline-block';
+                }
+            }
+
+            async handleFileSelect(event, imageType) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                // Validate file size (10MB limit)
+                if (file.size > 10 * 1024 * 1024) {
+                    this.showMessage('File too large. Maximum size is 10MB.', 'error');
+                    return;
+                }
+
+                // Validate file type
+                if (!file.type.startsWith('image/')) {
+                    this.showMessage('Please select an image file.', 'error');
+                    return;
+                }
+
+                this.showMessage('Uploading image...', 'success');
+                this.setLoading(true);
+
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const response = await fetch(`/api/images/upload/${imageType}`, {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'X-Username': this.getLoggedInUsername()
+                        }
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        this.showMessage(`${imageType} image uploaded successfully!`, 'success');
+                        this.displayImage(imageType, result.imageUrl);
+                        
+                        // Clear the file input
+                        event.target.value = '';
+                    } else {
+                        this.showMessage(`Upload failed: ${result.message}`, 'error');
+                    }
+
+                } catch (error) {
+                    console.error('Upload error:', error);
+                    this.showMessage('Upload failed. Please try again.', 'error');
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            async deleteImage(imageType) {
+                if (!confirm(`Are you sure you want to delete your ${imageType} image?`)) {
+                    return;
+                }
+
+                this.showMessage('Deleting image...', 'success');
+                this.setLoading(true);
+
+                try {
+                    const response = await fetch(`/api/images/${imageType}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'X-Username': this.getLoggedInUsername()
+                        }
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        this.showMessage(`${imageType} image deleted successfully!`, 'success');
+                        
+                        // Clear the preview
+                        const preview = document.getElementById(`${imageType}-preview`);
+                        const deleteBtn = document.getElementById(`${imageType}-delete`);
+                        
+                        if (preview) {
+                            preview.innerHTML = '<span>No image</span>';
+                        }
+                        
+                        if (deleteBtn) {
+                            deleteBtn.style.display = 'none';
+                        }
+                        
+                    } else {
+                        this.showMessage(`Delete failed: ${result.message}`, 'error');
+                    }
+
+                } catch (error) {
+                    console.error('Delete error:', error);
+                    this.showMessage('Delete failed. Please try again.', 'error');
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            async logout() {
+                if (!confirm('Are you sure you want to logout?')) {
+                    return;
+                }
+
+                this.setLoading(true);
+
+                try {
+                    const response = await fetch('/api/logout', {
+                        method: 'POST'
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        this.showMessage('Logged out successfully!', 'success');
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 1000);
+                    } else {
+                        this.showMessage('Logout failed. Please try again.', 'error');
+                    }
+
+                } catch (error) {
+                    console.error('Logout error:', error);
+                    this.showMessage('Logout failed. Please try again.', 'error');
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            getLoggedInUsername() {
+                // Get username from cookie
+                const cookies = document.cookie.split(';');
+                for (let cookie of cookies) {
+                    const [name, value] = cookie.trim().split('=');
+                    if (name === 'meshiyaLoggedIn') {
+                        return value;
+                    }
+                }
+                return null;
+            }
+
+            showMessage(message, type) {
+                const statusDiv = document.getElementById('status-message');
+                if (statusDiv) {
+                    statusDiv.textContent = message;
+                    statusDiv.className = `status-message status-${type}`;
+                    statusDiv.style.display = 'block';
+
+                    setTimeout(() => {
+                        statusDiv.style.display = 'none';
+                    }, 5000);
+                }
+            }
+
+            setLoading(loading) {
+                const container = document.querySelector('.settings-container');
+                if (container) {
+                    if (loading) {
+                        container.classList.add('loading');
+                    } else {
+                        container.classList.remove('loading');
+                    }
+                }
+            }
+        }
+
+        // Global function for delete buttons
+        function deleteImage(imageType) {
+            if (window.settingsManager) {
+                window.settingsManager.deleteImage(imageType);
+            }
+        }
+
+        // Initialize settings manager when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            window.settingsManager = new SettingsManager();
+        });
+    </script>
+</body>
+</html>

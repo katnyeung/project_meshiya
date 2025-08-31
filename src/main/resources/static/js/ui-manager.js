@@ -5,6 +5,15 @@ class UIManager {
         this.currentSeat = null;
         this.occupiedSeats = new Set();
         
+        // Initialize TTS service
+        this.ttsService = new TTSService();
+        
+        // Track pending TTS messages
+        this.pendingTTSMessages = new Map(); // messageKey -> messageElement
+        
+        // Track TTS ready messages that arrived before chat messages
+        this.readyTTSMessages = new Map(); // messageKey -> {audioUrl, timestamp}
+        
         this.initializeElements();
         this.attachEventListeners();
         // Don't check for existing user here - wait for initialization to complete
@@ -15,6 +24,11 @@ class UIManager {
      */
     initialize() {
         this.checkForExistingUser();
+        
+        // Start periodic cleanup of ready TTS messages
+        setInterval(() => {
+            this.cleanupReadyTTSMessages();
+        }, 2 * 60 * 1000); // Clean up every 2 minutes
     }
 
     initializeElements() {
@@ -38,7 +52,17 @@ class UIManager {
             connectionStatus: document.getElementById('connection-status'),
             
             masterStatusLabel: document.getElementById('master-status-label'),
-            masterStatusText: document.getElementById('master-status-text')
+            masterStatusText: document.getElementById('master-status-text'),
+            
+            // TTS controls
+            ttsControls: document.getElementById('tts-controls'),
+            ttsToggleBtn: document.getElementById('tts-toggle-btn'),
+            ttsTestBtn: document.getElementById('tts-test-btn'),
+            ttsSkipBtn: document.getElementById('tts-skip-btn'),
+            ttsClearBtn: document.getElementById('tts-clear-btn'),
+            ttsQueueStatus: document.getElementById('tts-queue-status'),
+            ttsCurrentText: document.getElementById('tts-current-text'),
+            ttsCurrent: document.getElementById('tts-current')
         };
     }
 
@@ -64,6 +88,23 @@ class UIManager {
         });
 
         this.elements.leaveSeatBtn.addEventListener('click', () => this.leaveSeat());
+        
+        // TTS controls
+        if (this.elements.ttsToggleBtn) {
+            this.elements.ttsToggleBtn.addEventListener('click', () => this.toggleTTS());
+        }
+        if (this.elements.ttsTestBtn) {
+            this.elements.ttsTestBtn.addEventListener('click', () => this.testTTS());
+        }
+        if (this.elements.ttsSkipBtn) {
+            this.elements.ttsSkipBtn.addEventListener('click', () => this.skipCurrentTTS());
+        }
+        if (this.elements.ttsClearBtn) {
+            this.elements.ttsClearBtn.addEventListener('click', () => this.clearTTSQueue());
+        }
+        
+        // Listen for TTS queue updates
+        document.addEventListener('tts-queue-update', (event) => this.handleTTSQueueUpdate(event.detail));
     }
 
     /**
@@ -235,10 +276,14 @@ class UIManager {
         this.elements.chatInterface.classList.remove('hidden');
         this.elements.seatControls.classList.remove('hidden');
         this.elements.statusDisplay.classList.remove('hidden');
+        this.elements.ttsControls.classList.remove('hidden');
         // Don't show the HTML master status label anymore - use Three.js sprite instead
         // this.elements.masterStatusLabel.classList.remove('hidden');
         
         this.addSystemMessage('Welcome to Meshiya! Take a seat and enjoy your stay.');
+        
+        // Initialize TTS toggle button state
+        this.updateTTSToggleButton();
     }
 
 
@@ -283,6 +328,35 @@ class UIManager {
         window.wsClient.leaveSeat();
     }
 
+    // Helper method to trigger user image state changes
+    triggerUserImageState(userName, userId, imageType, duration = 3000) {
+        if (!userName || !window.dinerScene) return;
+        
+        // Find which seat the user is in
+        const seatStates = window.dinerScene.getSeatStates();
+        let userSeat = null;
+        
+        for (const [seatNumber, seatData] of seatStates) {
+            if (seatData.userId === userId) {
+                userSeat = seatNumber;
+                break;
+            }
+        }
+        
+        if (userSeat) {
+            console.log(`🎭 Changing ${userName} to ${imageType} state for ${duration}ms`);
+            
+            // Change to the specified state
+            window.dinerScene.updateUserImageState(userSeat, imageType);
+            
+            // Return to normal state after duration
+            setTimeout(() => {
+                window.dinerScene.updateUserImageState(userSeat, 'normal');
+                console.log(`🎭 ${userName} returned to normal state`);
+            }, duration);
+        }
+    }
+    
     // Message handling
     handleMessage(message) {
         console.log('UI Manager handling message:', message);
@@ -290,6 +364,12 @@ class UIManager {
         switch (message.type) {
             case 'CHAT_MESSAGE':
                 this.addChatMessage(message.userName, message.content, message.timestamp);
+                // Record user activity for idle tracking
+                if (window.userStatusManager && message.userId) {
+                    window.userStatusManager.recordUserActivity(message.userId);
+                }
+                // Trigger chatting image state for the user who sent the message
+                this.triggerUserImageState(message.userName, message.userId, 'chatting');
                 break;
                 
             case 'SYSTEM_MESSAGE':
@@ -432,6 +512,7 @@ class UIManager {
             <div class="message-header">
                 <span class="message-sender">Master:</span>
                 <span class="message-timestamp">${timestampStr}</span>
+                <span class="tts-indicator" style="display: none;">🔊</span>
             </div>
             <div class="message-content">${this.escapeHtml(content)}</div>
         `;
@@ -442,6 +523,9 @@ class UIManager {
         if (window.meshiya && window.meshiya.dinerScene) {
             window.meshiya.dinerScene.showChefSpeechBubble(content);
         }
+        
+        // Convert Master's response to speech
+        this.speakMasterResponse(content, messageEl);
     }
 
     appendMessage(messageEl, timestamp) {
@@ -669,4 +753,314 @@ class UIManager {
     getOccupiedSeats() {
         return new Set(this.occupiedSeats);
     }
+
+    /**
+     * Generate message key for TTS caching (matches server-side logic)
+     * Uses SHA-256 since MD5 is not available in Web Crypto API
+     * @param {string} text - The message text
+     * @param {string} voice - The voice to use
+     * @returns {Promise<string>} - Hash of text:voice
+     */
+    async generateMessageKey(text, voice = 'am_michael') {
+        const input = text.trim() + ':' + voice;
+        const encoder = new TextEncoder();
+        const data = encoder.encode(input);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        // Take first 32 characters to match MD5 length
+        return hash.substring(0, 32);
+    }
+
+    /**
+     * Convert Master's response to speech using server-side TTS
+     * @param {string} content - The Master's message content
+     * @param {Element} messageEl - The message element for visual indicators
+     */
+    async speakMasterResponse(content, messageEl) {
+        if (!this.ttsService || !this.ttsService.isAvailable()) {
+            return;
+        }
+
+        // Check if this is an old message - only handle TTS for recent messages
+        const messageTimestamp = messageEl.getAttribute('data-timestamp');
+        if (messageTimestamp) {
+            try {
+                const messageDate = new Date(messageTimestamp);
+                const now = new Date();
+                const ageInMinutes = (now - messageDate) / (1000 * 60);
+                
+                if (ageInMinutes > 5) {
+                    console.log(`🔊 TTS: Skipping old message (${ageInMinutes.toFixed(1)} minutes old): ${content.substring(0, 50)}...`);
+                    return;
+                }
+            } catch (error) {
+                console.warn('TTS: Error parsing message timestamp:', messageTimestamp, error);
+            }
+        }
+
+        try {
+            // Generate message key to match server-side caching
+            const messageKey = await this.generateMessageKey(content);
+            console.log(`🔊 TTS: Waiting for server-side TTS for messageKey: ${messageKey}`);
+            
+            // Check if TTS is already ready (arrived before chat message)
+            const readyTTS = this.readyTTSMessages.get(messageKey);
+            if (readyTTS) {
+                console.log(`🔊 TTS: Found already-ready TTS for messageKey: ${messageKey}`);
+                // Remove from ready messages
+                this.readyTTSMessages.delete(messageKey);
+                
+                // Play immediately
+                await this.playTTSAudio(messageEl, messageKey, readyTTS.audioUrl);
+                return;
+            }
+            
+            // Store the message element for when TTS is ready
+            this.pendingTTSMessages.set(messageKey, messageEl);
+            
+            // Show loading indicator
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'inline';
+                ttsIndicator.textContent = '🔄'; // Loading indicator
+            }
+
+            // Server will generate TTS and broadcast TTS_READY message
+            // We'll handle playback in handleTTSReady method
+
+        } catch (error) {
+            console.error('Failed to prepare TTS for Master response:', error);
+            
+            // Hide indicator on error
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'none';
+            }
+        }
+    }
+
+    /**
+     * Handle TTS ready notification from server
+     * @param {Object} message - TTS ready message with messageKey and audioUrl
+     */
+    async handleTTSReady(message) {
+        console.log('🔊 TTS: Server-side TTS ready:', message);
+        
+        const { messageKey, audioUrl, roomId } = message;
+        
+        // Find the pending message element
+        const messageEl = this.pendingTTSMessages.get(messageKey);
+        if (!messageEl) {
+            console.log(`🔊 TTS: No pending message found for key: ${messageKey}`);
+            // Store the TTS ready message for when the chat message arrives
+            this.readyTTSMessages.set(messageKey, {
+                audioUrl,
+                timestamp: Date.now()
+            });
+            console.log(`🔊 TTS: Stored ready TTS for future message key: ${messageKey}`);
+            return;
+        }
+        
+        // Use the new playTTSAudio method to play audio
+        await this.playTTSAudio(messageEl, messageKey, audioUrl);
+    }
+
+    /**
+     * Play TTS audio for a message
+     * @param {Element} messageEl - The message element for visual indicators
+     * @param {string} messageKey - The message key for tracking
+     * @param {string} audioUrl - The audio URL to play
+     */
+    async playTTSAudio(messageEl, messageKey, audioUrl) {
+        try {
+            // Update indicator to show playing
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'inline';
+                ttsIndicator.textContent = '🔊'; // Playing indicator
+            }
+            
+            // Play the audio using the provided URL (supports both MP3 and WAV)
+            const audio = new Audio(audioUrl);
+            
+            // Handle audio events
+            audio.onloadstart = () => {
+                console.log(`🔊 TTS: Started loading audio for messageKey: ${messageKey}`);
+            };
+            
+            audio.oncanplay = () => {
+                console.log(`🔊 TTS: Audio ready to play for messageKey: ${messageKey}`);
+            };
+            
+            audio.onended = () => {
+                console.log(`🔊 TTS: Audio playback finished for messageKey: ${messageKey}`);
+                
+                // Hide indicator when done
+                if (ttsIndicator) {
+                    ttsIndicator.style.display = 'none';
+                }
+                
+                // Remove from pending messages if it was there
+                this.pendingTTSMessages.delete(messageKey);
+            };
+            
+            audio.onerror = (error) => {
+                console.error(`🔊 TTS: Audio playback error for messageKey: ${messageKey}`, error);
+                
+                // Hide indicator on error
+                if (ttsIndicator) {
+                    ttsIndicator.style.display = 'none';
+                }
+                
+                // Remove from pending messages if it was there
+                this.pendingTTSMessages.delete(messageKey);
+            };
+            
+            // Start playback
+            await audio.play();
+            console.log(`🔊 TTS: Started playing audio for messageKey: ${messageKey}`);
+            
+        } catch (error) {
+            console.error(`🔊 TTS: Failed to play audio for messageKey: ${messageKey}`, error);
+            
+            // Hide indicator on error
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'none';
+            }
+            
+            // Remove from pending messages if it was there
+            this.pendingTTSMessages.delete(messageKey);
+        }
+    }
+
+    /**
+     * Clean up old ready TTS messages to prevent memory leaks
+     * Called periodically to remove expired entries
+     */
+    cleanupReadyTTSMessages() {
+        const now = Date.now();
+        const maxAge = 5 * 60 * 1000; // 5 minutes in milliseconds
+        
+        for (const [messageKey, readyTTS] of this.readyTTSMessages.entries()) {
+            if (now - readyTTS.timestamp > maxAge) {
+                console.log(`🔊 TTS: Cleaning up expired ready TTS for messageKey: ${messageKey}`);
+                this.readyTTSMessages.delete(messageKey);
+            }
+        }
+    }
+
+    /**
+     * Toggle TTS on/off
+     * @param {boolean} enabled - Whether TTS should be enabled
+     */
+    setTTSEnabled(enabled) {
+        if (this.ttsService) {
+            this.ttsService.setEnabled(enabled);
+        }
+    }
+
+    /**
+     * Get current TTS status
+     * @returns {boolean} - Whether TTS is enabled
+     */
+    isTTSEnabled() {
+        return this.ttsService ? this.ttsService.isAvailable() : false;
+    }
+
+    /**
+     * Stop any currently playing TTS audio
+     */
+    stopTTS() {
+        if (this.ttsService) {
+            this.ttsService.stop();
+        }
+    }
+
+    /**
+     * Test TTS functionality
+     */
+    testTTS() {
+        if (this.ttsService) {
+            this.ttsService.test();
+        }
+    }
+
+    /**
+     * Toggle TTS on/off
+     */
+    toggleTTS() {
+        if (!this.ttsService) return;
+        
+        const currentState = this.ttsService.isAvailable();
+        this.ttsService.setEnabled(!currentState);
+        this.updateTTSToggleButton();
+        
+        if (!currentState) {
+            this.addSystemMessage('Master voice enabled 🔊');
+        } else {
+            this.addSystemMessage('Master voice muted 🔇');
+        }
+    }
+
+    /**
+     * Update the TTS toggle button appearance
+     */
+    updateTTSToggleButton() {
+        if (!this.elements.ttsToggleBtn || !this.ttsService) return;
+        
+        const isEnabled = this.ttsService.isAvailable();
+        this.elements.ttsToggleBtn.textContent = isEnabled ? '🔇 Mute' : '🔊 Enable';
+        this.elements.ttsToggleBtn.classList.toggle('tts-enabled', isEnabled);
+        this.elements.ttsToggleBtn.classList.toggle('tts-disabled', !isEnabled);
+    }
+
+    /**
+     * Skip current TTS audio
+     */
+    skipCurrentTTS() {
+        if (this.ttsService) {
+            this.ttsService.skipCurrent();
+        }
+    }
+
+    /**
+     * Clear TTS queue
+     */
+    clearTTSQueue() {
+        if (this.ttsService) {
+            this.ttsService.stop(); // This clears queue and stops current
+            this.addSystemMessage('🔇 TTS queue cleared');
+        }
+    }
+
+    /**
+     * Handle TTS queue updates
+     */
+    handleTTSQueueUpdate(status) {
+        // Update queue status display
+        if (this.elements.ttsQueueStatus) {
+            this.elements.ttsQueueStatus.textContent = `Queue: ${status.queueLength}`;
+        }
+
+        // Show/hide current playing text
+        if (this.elements.ttsCurrent && this.elements.ttsCurrentText) {
+            if (status.isPlaying && status.currentItem) {
+                this.elements.ttsCurrentText.textContent = status.currentItem;
+                this.elements.ttsCurrent.classList.remove('hidden');
+            } else {
+                this.elements.ttsCurrent.classList.add('hidden');
+            }
+        }
+
+        // Enable/disable controls based on queue state
+        if (this.elements.ttsSkipBtn) {
+            this.elements.ttsSkipBtn.disabled = !status.isPlaying;
+        }
+        if (this.elements.ttsClearBtn) {
+            this.elements.ttsClearBtn.disabled = status.queueLength === 0 && !status.isPlaying;
+        }
+    }
+
 }

@@ -9,6 +9,7 @@ import com.meshiya.service.OrderService;
 import com.meshiya.service.UserService;
 import com.meshiya.service.ConsumableService;
 import com.meshiya.service.SeatService;
+import com.meshiya.service.AvatarStateService;
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
 import com.meshiya.model.Consumable;
@@ -51,6 +52,9 @@ public class DebugController {
     
     @Autowired
     private SeatService seatService;
+    
+    @Autowired
+    private AvatarStateService avatarStateService;
 
     @Operation(summary = "Get all rooms information", description = "Returns debug information about all rooms in the system")
     @GetMapping("/rooms")
@@ -82,20 +86,13 @@ public class DebugController {
         List<DebugUserInfo> users = new ArrayList<>();
         
         try {
-            // Get seat occupancy from room1 to find active users
-            Map<Integer, String> seatOccupancy = roomService.getRoomSeatOccupancy("room1");
+            // Get seat occupancy from SeatService to find active users
+            List<SeatService.UserInfo> usersInRoom = seatService.getUsersInRoom("room1");
             
-            if (seatOccupancy != null) {
-                for (Map.Entry<Integer, String> entry : seatOccupancy.entrySet()) {
-                    String seatId = String.valueOf(entry.getKey());
-                    String userId = entry.getValue();
-                    
-                    if (userId != null && !userId.isEmpty()) {
-                        DebugUserInfo userInfo = getUserInfo(userId);
-                        userInfo.setSeatId(seatId);
-                        users.add(userInfo);
-                    }
-                }
+            for (SeatService.UserInfo userInfo : usersInRoom) {
+                DebugUserInfo debugUserInfo = getUserInfo(userInfo.getUserId());
+                debugUserInfo.setSeatId(String.valueOf(userInfo.getSeatId()));
+                users.add(debugUserInfo);
             }
             
             // Also get users from UserService who might not be seated
@@ -293,26 +290,26 @@ public class DebugController {
     }
 
     @Operation(summary = "Initialize/Create room", 
-               description = "Creates or reinitializes a room with default settings. Useful after clearing cache.")
+               description = "Creates or reinitializes a room with custom settings.")
     @io.swagger.v3.oas.annotations.responses.ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Room initialized successfully"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Error initializing room")
     })
     @PostMapping("/rooms/{roomId}/initialize")
     public Map<String, Object> initializeRoom(
-            @Parameter(description = "Room ID to initialize") @PathVariable String roomId) {
+            @Parameter(description = "Room ID to initialize") @PathVariable String roomId,
+            @Parameter(description = "Room display name") @RequestParam(defaultValue = "New Room") String roomName,
+            @Parameter(description = "Master name") @RequestParam(defaultValue = "Master") String masterName,
+            @Parameter(description = "Welcome message") @RequestParam(defaultValue = "Welcome to this room.") String welcomeMessage) {
         Map<String, Object> result = new HashMap<>();
         
         try {
-            if ("room1".equals(roomId)) {
-                roomService.initializeRoom1();
-                result.put("status", "SUCCESS");
-                result.put("message", "Room " + roomId + " initialized successfully");
-                result.put("roomId", roomId);
-            } else {
-                result.put("status", "ERROR");
-                result.put("message", "Only room1 is supported for initialization");
-            }
+            roomService.initializeRoom(roomId, roomName, masterName, welcomeMessage);
+            result.put("status", "SUCCESS");
+            result.put("message", "Room " + roomId + " (" + roomName + ") initialized successfully");
+            result.put("roomId", roomId);
+            result.put("roomName", roomName);
+            result.put("masterName", masterName);
         } catch (Exception e) {
             result.put("status", "ERROR");
             result.put("message", "Failed to initialize room: " + e.getMessage());
@@ -354,9 +351,9 @@ public class DebugController {
     // Helper methods
     private DebugRoomInfo getRoomInfo(String roomId) {
         try {
-            // Get room data from RoomService (this is the correct source)
+            // Get room data - messages from RoomService, seats from SeatService
             List<ChatMessage> messages = roomService.getRoomMessages(roomId);
-            Map<Integer, String> roomSeatOccupancy = roomService.getRoomSeatOccupancy(roomId);
+            List<SeatService.UserInfo> usersInRoom = seatService.getUsersInRoom(roomId);
             
             List<DebugRoomInfo.DebugMessage> debugMessages = new ArrayList<>();
             
@@ -379,10 +376,8 @@ public class DebugController {
             
             // Convert seat occupancy to String keys for DebugRoomInfo
             Map<String, String> seatOccupancy = new HashMap<>();
-            if (roomSeatOccupancy != null) {
-                for (Map.Entry<Integer, String> entry : roomSeatOccupancy.entrySet()) {
-                    seatOccupancy.put(String.valueOf(entry.getKey()), entry.getValue());
-                }
+            for (SeatService.UserInfo userInfo : usersInRoom) {
+                seatOccupancy.put(String.valueOf(userInfo.getSeatId()), userInfo.getUserId());
             }
             
             int messageCount = messages != null ? messages.size() : 0;
@@ -581,6 +576,137 @@ public class DebugController {
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", "Failed to clear consumables: " + e.getMessage());
+            return error;
+        }
+    }
+    
+    @Operation(summary = "Get avatar states debug info", description = "Returns avatar state system debug information")
+    @GetMapping("/avatar-states")
+    public Map<String, Object> getAvatarStatesDebug() {
+        try {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("avatarStateServiceDebug", avatarStateService.getDebugInfo());
+            result.put("timestamp", System.currentTimeMillis());
+            return result;
+        } catch (Exception e) {
+            logger.error("Error getting avatar states debug info", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("error", "Failed to get avatar states debug info: " + e.getMessage());
+            return error;
+        }
+    }
+    
+    @Operation(summary = "Trigger avatar state change", description = "Manually trigger avatar state change for testing")
+    @PostMapping("/trigger-avatar-state/{userId}/{state}")
+    public Map<String, Object> triggerAvatarState(
+            @PathVariable String userId,
+            @PathVariable String state,
+            @RequestParam(defaultValue = "room1") String roomId,
+            @RequestParam(required = false) Integer seatId) {
+        try {
+            if (seatId == null) {
+                // Find user's current seat
+                SeatService.RoomMapping allRooms = seatService.getAllRooms();
+                SeatService.RoomInfo room = allRooms.getRooms().get(roomId);
+                if (room != null) {
+                    for (SeatService.UserInfo user : room.getSeats().values()) {
+                        if (userId.equals(user.getUserId())) {
+                            seatId = user.getSeatId();
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (seatId == null) {
+                Map<String, Object> error = new HashMap<>();
+                error.put("success", false);
+                error.put("error", "User not found in any seat or seatId not provided");
+                return error;
+            }
+            
+            AvatarStateService.AvatarState avatarState;
+            try {
+                avatarState = AvatarStateService.AvatarState.valueOf(state.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                Map<String, Object> error = new HashMap<>();
+                error.put("success", false);
+                error.put("error", "Invalid avatar state: " + state + ". Valid states: NORMAL, IDLE, CHATTING, EATING");
+                return error;
+            }
+            
+            if (avatarState == AvatarStateService.AvatarState.CHATTING) {
+                avatarStateService.triggerChattingState(userId, roomId, seatId);
+            } else {
+                avatarStateService.setUserAvatarState(userId, roomId, seatId, avatarState);
+            }
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("message", "Avatar state " + state + " triggered for user " + userId + " at seat " + seatId);
+            result.put("timestamp", System.currentTimeMillis());
+            return result;
+            
+        } catch (Exception e) {
+            logger.error("Error triggering avatar state", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("error", "Failed to trigger avatar state: " + e.getMessage());
+            return error;
+        }
+    }
+    
+    @Operation(summary = "Check user eating state", description = "Check if user has consumables and current avatar state")
+    @GetMapping("/user-eating-state/{userId}")
+    public Map<String, Object> getUserEatingState(@PathVariable String userId) {
+        try {
+            Map<String, Object> result = new HashMap<>();
+            
+            // Find user's current seat
+            SeatService.RoomMapping allRooms = seatService.getAllRooms();
+            SeatService.UserInfo userInfo = null;
+            for (SeatService.RoomInfo room : allRooms.getRooms().values()) {
+                for (SeatService.UserInfo user : room.getSeats().values()) {
+                    if (userId.equals(user.getUserId())) {
+                        userInfo = user;
+                        break;
+                    }
+                }
+                if (userInfo != null) break;
+            }
+            
+            if (userInfo == null) {
+                result.put("success", false);
+                result.put("error", "User not found in any seat");
+                return result;
+            }
+            
+            // Get consumables
+            var consumables = consumableService.getConsumables(userId, userInfo.getRoomId(), userInfo.getSeatId());
+            
+            // Get current avatar state
+            AvatarStateService.AvatarState currentState = avatarStateService.getUserAvatarState(userId);
+            
+            result.put("success", true);
+            result.put("userId", userId);
+            result.put("seatId", userInfo.getSeatId());
+            result.put("roomId", userInfo.getRoomId());
+            result.put("consumables", consumables);
+            result.put("consumableCount", consumables.size());
+            result.put("currentAvatarState", currentState.name());
+            result.put("hasConsumables", !consumables.isEmpty());
+            result.put("shouldBeEating", !consumables.isEmpty() && currentState != AvatarStateService.AvatarState.CHATTING);
+            result.put("timestamp", System.currentTimeMillis());
+            
+            return result;
+            
+        } catch (Exception e) {
+            logger.error("Error checking user eating state", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("error", "Failed to check user eating state: " + e.getMessage());
             return error;
         }
     }

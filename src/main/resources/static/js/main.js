@@ -80,6 +80,39 @@ class MeshiyaApp {
         this.wsClient.onOrderNotification((message) => {
             this.uiManager.handleOrderNotification(message);
         });
+        
+        // Connect avatar state updates to diner scene
+        this.wsClient.onAvatarStateUpdate((message) => {
+            this.handleAvatarStateUpdate(message);
+        });
+        
+        // Connect TTS ready notifications to UI manager
+        this.wsClient.onTTSReady((message) => {
+            this.uiManager.handleTTSReady(message);
+        });
+    }
+    
+    handleAvatarStateUpdate(message) {
+        console.log('🎭 [MAIN] Avatar state update received:', message);
+        
+        const { userId, roomId, seatId, avatarState } = message;
+        
+        console.log(`🎭 [MAIN] Processing avatar state: userId=${userId}, seatId=${seatId}, state=${avatarState}`);
+        
+        if (!seatId || seatId < 1 || seatId > 8) {
+            console.warn('⚠️ [MAIN] Invalid seat ID in avatar state update:', seatId);
+            return;
+        }
+        
+        if (!this.dinerScene) {
+            console.warn('⚠️ [MAIN] Diner scene not available for avatar state update');
+            return;
+        }
+        
+        // Update the user's avatar image state
+        console.log(`🎭 [MAIN] Calling dinerScene.updateUserImageState(${seatId}, '${avatarState}')`);
+        this.dinerScene.updateUserImageState(seatId, avatarState);
+        console.log('🎭 [MAIN] Avatar state update call completed');
     }
 
     // Public API for debugging/external access

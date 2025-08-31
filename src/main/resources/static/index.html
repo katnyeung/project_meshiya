@@ -17,8 +17,41 @@
             <div id="welcome-screen" class="panel">
                 <h1>Welcome to Meshiya</h1>
                 <p>Enter your name to join the midnight diner</p>
-                <input type="text" id="username-input" placeholder="Your name..." maxlength="20">
-                <button id="enter-diner-btn">Enter Diner</button>
+                
+                <!-- Guest Entry -->
+                <div id="guest-entry">
+                    <input type="text" id="username-input" placeholder="Your name..." maxlength="20">
+                    <button id="enter-diner-btn">Enter Diner</button>
+                </div>
+                
+                <!-- Login Section -->
+                <div id="login-section" class="auth-section">
+                    <div class="auth-divider">
+                        <span>or</span>
+                    </div>
+                    <h3>Login to your account</h3>
+                    <div id="login-message" class="auth-message hidden"></div>
+                    <form id="login-form">
+                        <input type="text" id="login-email" placeholder="Email or Username" required>
+                        <input type="password" id="login-password" placeholder="Password" required>
+                        <button type="submit" id="login-btn">Login</button>
+                    </form>
+                    <p class="auth-links">
+                        <small>Don't have an account? <a href="register.html">Create one</a></small>
+                    </p>
+                </div>
+                
+                <!-- Logged in user info -->
+                <div id="logged-in-user" class="hidden">
+                    <div class="user-info">
+                        <p><strong>Welcome back, <span id="current-username"></span>!</strong></p>
+                        <button id="enter-diner-logged-in-btn" class="enter-btn">Enter Diner</button>
+                        <div class="user-actions">
+                            <a href="settings.html" class="action-link">Settings</a>
+                            <a href="#" id="logout-link" class="action-link">Logout</a>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <!-- Chat interface -->
@@ -49,6 +82,68 @@
             <div id="status-display" class="panel hidden">
                 <div id="current-seat">Not seated</div>
                 <div id="connection-status">Connecting...</div>
+                <button id="user-profile-btn" class="profile-btn" title="User Profile">👤</button>
+            </div>
+            
+            <!-- TTS Controls -->
+            <div id="tts-controls" class="panel hidden">
+                <div class="tts-header">
+                    <span>🔊 Master Voice</span>
+                    <span id="tts-queue-status" class="tts-queue-status">Queue: 0</span>
+                </div>
+                <div class="tts-controls-content">
+                    <button id="tts-toggle-btn" class="tts-btn">🔇 Mute</button>
+                    <button id="tts-test-btn" class="tts-btn">Test</button>
+                    <button id="tts-skip-btn" class="tts-btn">⏭️ Skip</button>
+                    <button id="tts-clear-btn" class="tts-btn">🗑️ Clear</button>
+                </div>
+                <div id="tts-current" class="tts-current hidden">
+                    <small>Playing: <span id="tts-current-text">...</span></small>
+                </div>
+            </div>
+            
+            <!-- User Profile Panel -->
+            <div id="user-profile-panel" class="panel user-profile-panel hidden">
+                <div class="profile-header">
+                    <h3>User Profile</h3>
+                    <button id="close-profile-btn" class="close-btn">×</button>
+                </div>
+                
+                <!-- For registered users -->
+                <div id="registered-user-profile" class="profile-content hidden">
+                    <div class="user-avatar">
+                        <div class="avatar-placeholder">👤</div>
+                        <p class="username" id="profile-username">Username</p>
+                    </div>
+                    <div class="profile-actions">
+                        <a href="settings.html" class="profile-action-btn settings-btn">
+                            ⚙️ Settings
+                        </a>
+                        <button id="profile-logout-btn" class="profile-action-btn logout-btn">
+                            🚪 Logout
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- For guest users -->
+                <div id="guest-user-profile" class="profile-content hidden">
+                    <div class="user-avatar">
+                        <div class="avatar-placeholder">👤</div>
+                        <p class="username" id="guest-username">Guest User</p>
+                    </div>
+                    <div class="guest-message">
+                        <p>🎭 You're using a guest account</p>
+                        <p><small>Create an account to customize your experience and save your progress!</small></p>
+                    </div>
+                    <div class="profile-actions">
+                        <a href="register.html" class="profile-action-btn register-btn">
+                            📝 Register
+                        </a>
+                        <button id="guest-login-btn" class="profile-action-btn login-btn">
+                            🔑 Login
+                        </button>
+                    </div>
+                </div>
             </div>
             
             <!-- Video display - separate from status -->
@@ -91,11 +186,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
     
     <!-- Application scripts -->
+    <script src="js/auth-manager.js"></script>
     <script src="js/websocket-client.js"></script>
     <script src="js/diner-scene.js"></script>
+    <script src="js/tts-service.js"></script>
     <script src="js/ui-manager.js"></script>
     <script src="js/user-status-manager.js"></script>
     <script src="js/video-display-manager.js"></script>
+    <script src="js/user-profile-manager.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>
