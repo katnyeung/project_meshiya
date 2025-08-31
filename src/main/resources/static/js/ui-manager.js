@@ -8,6 +8,12 @@ class UIManager {
         // Initialize TTS service
         this.ttsService = new TTSService();
         
+        // Track pending TTS messages
+        this.pendingTTSMessages = new Map(); // messageKey -> messageElement
+        
+        // Track TTS ready messages that arrived before chat messages
+        this.readyTTSMessages = new Map(); // messageKey -> {audioUrl, timestamp}
+        
         this.initializeElements();
         this.attachEventListeners();
         // Don't check for existing user here - wait for initialization to complete
@@ -18,6 +24,11 @@ class UIManager {
      */
     initialize() {
         this.checkForExistingUser();
+        
+        // Start periodic cleanup of ready TTS messages
+        setInterval(() => {
+            this.cleanupReadyTTSMessages();
+        }, 2 * 60 * 1000); // Clean up every 2 minutes
     }
 
     initializeElements() {
@@ -744,7 +755,25 @@ class UIManager {
     }
 
     /**
-     * Convert Master's response to speech
+     * Generate message key for TTS caching (matches server-side logic)
+     * Uses SHA-256 since MD5 is not available in Web Crypto API
+     * @param {string} text - The message text
+     * @param {string} voice - The voice to use
+     * @returns {Promise<string>} - Hash of text:voice
+     */
+    async generateMessageKey(text, voice = 'am_michael') {
+        const input = text.trim() + ':' + voice;
+        const encoder = new TextEncoder();
+        const data = encoder.encode(input);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        // Take first 32 characters to match MD5 length
+        return hash.substring(0, 32);
+    }
+
+    /**
+     * Convert Master's response to speech using server-side TTS
      * @param {string} content - The Master's message content
      * @param {Element} messageEl - The message element for visual indicators
      */
@@ -753,31 +782,171 @@ class UIManager {
             return;
         }
 
+        // Check if this is an old message - only handle TTS for recent messages
+        const messageTimestamp = messageEl.getAttribute('data-timestamp');
+        if (messageTimestamp) {
+            try {
+                const messageDate = new Date(messageTimestamp);
+                const now = new Date();
+                const ageInMinutes = (now - messageDate) / (1000 * 60);
+                
+                if (ageInMinutes > 5) {
+                    console.log(`🔊 TTS: Skipping old message (${ageInMinutes.toFixed(1)} minutes old): ${content.substring(0, 50)}...`);
+                    return;
+                }
+            } catch (error) {
+                console.warn('TTS: Error parsing message timestamp:', messageTimestamp, error);
+            }
+        }
+
         try {
-            // Find the TTS indicator in the message element
-            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            // Generate message key to match server-side caching
+            const messageKey = await this.generateMessageKey(content);
+            console.log(`🔊 TTS: Waiting for server-side TTS for messageKey: ${messageKey}`);
             
-            // Show loading/playing indicator
+            // Check if TTS is already ready (arrived before chat message)
+            const readyTTS = this.readyTTSMessages.get(messageKey);
+            if (readyTTS) {
+                console.log(`🔊 TTS: Found already-ready TTS for messageKey: ${messageKey}`);
+                // Remove from ready messages
+                this.readyTTSMessages.delete(messageKey);
+                
+                // Play immediately
+                await this.playTTSAudio(messageEl, messageKey, readyTTS.audioUrl);
+                return;
+            }
+            
+            // Store the message element for when TTS is ready
+            this.pendingTTSMessages.set(messageKey, messageEl);
+            
+            // Show loading indicator
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
             if (ttsIndicator) {
                 ttsIndicator.style.display = 'inline';
                 ttsIndicator.textContent = '🔄'; // Loading indicator
             }
 
-            // Speak the Master's response
-            await this.ttsService.speak(content);
-
-            // Hide indicator when done
-            if (ttsIndicator) {
-                ttsIndicator.style.display = 'none';
-            }
+            // Server will generate TTS and broadcast TTS_READY message
+            // We'll handle playback in handleTTSReady method
 
         } catch (error) {
-            console.error('Failed to speak Master response:', error);
+            console.error('Failed to prepare TTS for Master response:', error);
             
             // Hide indicator on error
             const ttsIndicator = messageEl.querySelector('.tts-indicator');
             if (ttsIndicator) {
                 ttsIndicator.style.display = 'none';
+            }
+        }
+    }
+
+    /**
+     * Handle TTS ready notification from server
+     * @param {Object} message - TTS ready message with messageKey and audioUrl
+     */
+    async handleTTSReady(message) {
+        console.log('🔊 TTS: Server-side TTS ready:', message);
+        
+        const { messageKey, audioUrl, roomId } = message;
+        
+        // Find the pending message element
+        const messageEl = this.pendingTTSMessages.get(messageKey);
+        if (!messageEl) {
+            console.log(`🔊 TTS: No pending message found for key: ${messageKey}`);
+            // Store the TTS ready message for when the chat message arrives
+            this.readyTTSMessages.set(messageKey, {
+                audioUrl,
+                timestamp: Date.now()
+            });
+            console.log(`🔊 TTS: Stored ready TTS for future message key: ${messageKey}`);
+            return;
+        }
+        
+        // Use the new playTTSAudio method to play audio
+        await this.playTTSAudio(messageEl, messageKey, audioUrl);
+    }
+
+    /**
+     * Play TTS audio for a message
+     * @param {Element} messageEl - The message element for visual indicators
+     * @param {string} messageKey - The message key for tracking
+     * @param {string} audioUrl - The audio URL to play
+     */
+    async playTTSAudio(messageEl, messageKey, audioUrl) {
+        try {
+            // Update indicator to show playing
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'inline';
+                ttsIndicator.textContent = '🔊'; // Playing indicator
+            }
+            
+            // Play the audio using the provided URL (supports both MP3 and WAV)
+            const audio = new Audio(audioUrl);
+            
+            // Handle audio events
+            audio.onloadstart = () => {
+                console.log(`🔊 TTS: Started loading audio for messageKey: ${messageKey}`);
+            };
+            
+            audio.oncanplay = () => {
+                console.log(`🔊 TTS: Audio ready to play for messageKey: ${messageKey}`);
+            };
+            
+            audio.onended = () => {
+                console.log(`🔊 TTS: Audio playback finished for messageKey: ${messageKey}`);
+                
+                // Hide indicator when done
+                if (ttsIndicator) {
+                    ttsIndicator.style.display = 'none';
+                }
+                
+                // Remove from pending messages if it was there
+                this.pendingTTSMessages.delete(messageKey);
+            };
+            
+            audio.onerror = (error) => {
+                console.error(`🔊 TTS: Audio playback error for messageKey: ${messageKey}`, error);
+                
+                // Hide indicator on error
+                if (ttsIndicator) {
+                    ttsIndicator.style.display = 'none';
+                }
+                
+                // Remove from pending messages if it was there
+                this.pendingTTSMessages.delete(messageKey);
+            };
+            
+            // Start playback
+            await audio.play();
+            console.log(`🔊 TTS: Started playing audio for messageKey: ${messageKey}`);
+            
+        } catch (error) {
+            console.error(`🔊 TTS: Failed to play audio for messageKey: ${messageKey}`, error);
+            
+            // Hide indicator on error
+            const ttsIndicator = messageEl.querySelector('.tts-indicator');
+            if (ttsIndicator) {
+                ttsIndicator.style.display = 'none';
+            }
+            
+            // Remove from pending messages if it was there
+            this.pendingTTSMessages.delete(messageKey);
+        }
+    }
+
+    /**
+     * Clean up old ready TTS messages to prevent memory leaks
+     * Called periodically to remove expired entries
+     */
+    cleanupReadyTTSMessages() {
+        const now = Date.now();
+        const maxAge = 5 * 60 * 1000; // 5 minutes in milliseconds
+        
+        for (const [messageKey, readyTTS] of this.readyTTSMessages.entries()) {
+            if (now - readyTTS.timestamp > maxAge) {
+                console.log(`🔊 TTS: Cleaning up expired ready TTS for messageKey: ${messageKey}`);
+                this.readyTTSMessages.delete(messageKey);
             }
         }
     }

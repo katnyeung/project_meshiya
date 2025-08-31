@@ -12,6 +12,7 @@ class WebSocketClient {
         this.userStatusHandlers = [];
         this.orderNotificationHandlers = [];
         this.avatarStateHandlers = [];
+        this.ttsReadyHandlers = [];
     }
 
     connect(username) {
@@ -107,6 +108,18 @@ class WebSocketClient {
                 this.handleAvatarStateUpdate(message);
             } catch (e) {
                 console.error('🎭 [WEBSOCKET] Error parsing avatar state message:', e);
+            }
+        });
+        
+        // Subscribe to TTS ready notifications
+        this.stompClient.subscribe('/topic/room/room1/tts', (messageOutput) => {
+            console.log('🔊 [WEBSOCKET] Received TTS ready:', messageOutput.body);
+            try {
+                const message = JSON.parse(messageOutput.body);
+                console.log('🔊 [WEBSOCKET] Parsed TTS message:', message);
+                this.handleTTSReady(message);
+            } catch (e) {
+                console.error('🔊 [WEBSOCKET] Error parsing TTS message:', e);
             }
         });
         
@@ -261,6 +274,11 @@ class WebSocketClient {
         console.log('🎭 [HANDLER] Avatar state handlers count:', this.avatarStateHandlers.length);
         this.notifyAvatarStateHandlers(message);
     }
+    
+    handleTTSReady(message) {
+        console.log('🔊 [HANDLER] Handling TTS ready:', message);
+        this.notifyTTSReadyHandlers(message);
+    }
 
     // Event handler management
     onMessage(handler) {
@@ -290,6 +308,10 @@ class WebSocketClient {
     onAvatarStateUpdate(handler) {
         this.avatarStateHandlers.push(handler);
     }
+    
+    onTTSReady(handler) {
+        this.ttsReadyHandlers.push(handler);
+    }
 
     notifyMessageHandlers(message) {
         this.messageHandlers.forEach(handler => handler(message));
@@ -317,6 +339,10 @@ class WebSocketClient {
     
     notifyAvatarStateHandlers(message) {
         this.avatarStateHandlers.forEach(handler => handler(message));
+    }
+    
+    notifyTTSReadyHandlers(message) {
+        this.ttsReadyHandlers.forEach(handler => handler(message));
     }
 
     /**

@@ -47,7 +47,7 @@ public class UserService {
     @Value("${meshiya.user.timeout.minutes:10}")
     private int inactiveTimeoutMinutes;
     
-    @Value("${minio.bucket:meshiya-user-images}")
+    @Value("${minio.bucket.default:meshiya-user-images}")
     private String bucketName;
     
     @Value("${minio.endpoint:http://localhost:9000}")

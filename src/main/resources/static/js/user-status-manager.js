@@ -432,6 +432,9 @@ class UserStatusManager {
                 console.log(`   - Hiding Three.js status sprite for seat ${seatId} (no consumables)`);
                 window.meshiya.dinerScene.hideUserStatusSprite(seatId);
             }
+            
+            // Always try to update username regardless of consumables
+            this.fetchAndUpdateUsername(userId, seatId);
         }
     }
     
@@ -719,6 +722,46 @@ class UserStatusManager {
         this.preservedTimers.clear();
         
         console.log('🧹 UserStatusManager cleaned up');
+    }
+
+    /**
+     * Fetch username from seat occupancy data and update username display
+     */
+    async fetchAndUpdateUsername(userId, seatId) {
+        try {
+            console.log(`👤 [USERNAME] Fetching username for userId ${userId} in seat ${seatId}`);
+            
+            const response = await fetch('/api/debug/seat-occupancy');
+            if (response.ok) {
+                const occupancyData = await response.json();
+                
+                // Find the username for this userId/seatId
+                for (const roomId in occupancyData) {
+                    if (roomId === 'timestamp' || roomId === 'totalRooms') continue;
+                    
+                    const room = occupancyData[roomId];
+                    if (room.seats) {
+                        for (const seatKey in room.seats) {
+                            const seatData = room.seats[seatKey];
+                            if (seatData.userId === userId && seatData.seatId === seatId) {
+                                const userName = seatData.userName;
+                                if (userName && window.meshiya && window.meshiya.dinerScene) {
+                                    console.log(`👤 [USERNAME] Found username: ${userName} for seat ${seatId}`);
+                                    window.meshiya.dinerScene.updateUsernameBox(seatId, userName);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                console.log(`⚠️ [USERNAME] No username found for userId ${userId} in seat ${seatId}`);
+            } else {
+                console.warn('Failed to fetch seat occupancy data for username lookup');
+            }
+        } catch (error) {
+            console.error('Error fetching username from seat occupancy:', error);
+        }
     }
 
     /**

@@ -311,7 +311,7 @@ public class MasterService {
             boolean success = orderService.placeLlmOrder(userId, userName, roomId, orderRequest, seatId);
             if (success) {
                 updateStatus(MasterStatus.PREPARING_ORDER);
-                return Optional.of("I'll create something special for you. Please wait a moment.");
+                return Optional.of("*rolls up sleeves and heads to the kitchen* Let me fire up the stove and get this ready for you.");
             } else {
                 return Optional.of("Let me check what we have available. What specifically would you like?");
             }

@@ -14,6 +14,7 @@ class DinerScene {
             customers: [],
             userStatusBoxes: [],
             userImageBoxes: [], // Separate image display boxes
+            usernameBoxes: [], // Username display boxes below avatars
             masterStatusLabel: null,
             chefSpeechBubble: null, // Speech bubble above chef's head
             tvDisplay: null // TV sprite for video sharing
@@ -698,6 +699,38 @@ class DinerScene {
         } else {
             console.log(`⚠️ [SKIP] Skipping custom image load for seat ${seatNumber} (missing userId/userName or shouldLoadCustomImage returned false)`);
         }
+        
+        // Always update username box if we have a userName
+        if (userName) {
+            this.updateUsernameBox(seatNumber, userName);
+        }
+    }
+    
+    updateUsernameBox(seatNumber, username) {
+        console.log(`👤 [USERNAME] Updating username box for seat ${seatNumber}: ${username}`);
+        
+        if (seatNumber < 1 || seatNumber > 8) {
+            console.warn(`⚠️ [INVALID SEAT] Seat number ${seatNumber} is out of range (1-8)`);
+            return;
+        }
+        
+        const seatIndex = seatNumber - 1;
+        if (seatIndex >= 0 && seatIndex < this.sprites.usernameBoxes.length) {
+            const usernameSprite = this.sprites.usernameBoxes[seatIndex];
+            
+            // Update the canvas with new username
+            const canvas = this.createUsernameCanvas(username);
+            const texture = new THREE.CanvasTexture(canvas);
+            usernameSprite.material.map = texture;
+            usernameSprite.material.needsUpdate = true;
+            
+            // Make it visible
+            usernameSprite.visible = true;
+            
+            console.log(`✅ [USERNAME] Updated username box for seat ${seatNumber} with "${username}"`);
+        } else {
+            console.warn(`⚠️ [NO USERNAME SPRITE] No username sprite found for seat ${seatNumber}`);
+        }
     }
     
     createFallbackCustomerMaterial(isCurrentUser = false) {
@@ -920,6 +953,22 @@ class DinerScene {
             
             this.sprites.userImageBoxes.push(imageSprite);
             this.scene.add(imageSprite);
+            
+            // Create username display box below image
+            const usernameCanvas = this.createUsernameCanvas('');
+            const usernameTexture = new THREE.CanvasTexture(usernameCanvas);
+            const usernameMaterial = new THREE.SpriteMaterial({ map: usernameTexture, transparent: true });
+            const usernameSprite = new THREE.Sprite(usernameMaterial);
+            
+            // Position username box below image box
+            if (seat) {
+                usernameSprite.position.set(seat.position.x, seat.position.y + 1.2, 3);
+                usernameSprite.scale.set(1.5, 0.4, 1);
+            }
+            usernameSprite.visible = false; // Initially hidden
+            
+            this.sprites.usernameBoxes.push(usernameSprite);
+            this.scene.add(usernameSprite);
         }
     }
     
@@ -955,6 +1004,42 @@ class DinerScene {
         lines.forEach((line, index) => {
             ctx.fillText(line, 100, startY + index * lineHeight);
         });
+        
+        return canvas;
+    }
+    
+    createUsernameCanvas(username) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 120;
+        canvas.height = 32;
+        const ctx = canvas.getContext('2d');
+        
+        if (!username || username.trim() === '') {
+            // Empty transparent canvas for hidden state
+            return canvas;
+        }
+        
+        // Background with rounded corners
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.strokeStyle = '#ffd700';
+        ctx.lineWidth = 1;
+        this.drawRoundedRect(ctx, 1, 1, 118, 30, 6);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Username text
+        ctx.fillStyle = '#ffd700';
+        ctx.font = 'bold 11px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // Truncate long usernames
+        let displayText = username;
+        if (username.length > 12) {
+            displayText = username.substring(0, 10) + '..';
+        }
+        
+        ctx.fillText(displayText, 60, 16);
         
         return canvas;
     }
@@ -1132,6 +1217,15 @@ class DinerScene {
         
         statusSprite.visible = true;
         
+        // Also try to update username box if we can find the customer sprite
+        const customerSprite = this.sprites.customers[seatIndex];
+        if (customerSprite && customerSprite.userData && customerSprite.userData.userName) {
+            console.log(`👤 [USERNAME] Found userName in customer sprite: ${customerSprite.userData.userName}`);
+            this.updateUsernameBox(seatId, customerSprite.userData.userName);
+        } else {
+            console.log(`⚠️ [USERNAME] No userName found in customer sprite for seat ${seatId}`);
+        }
+        
         // Update image display if any consumable has image data
         this.updateUserImageSprite(seatId, uniqueConsumables);
     }
@@ -1181,6 +1275,10 @@ class DinerScene {
         if (seatIndex >= 0 && seatIndex < this.sprites.userImageBoxes.length) {
             this.sprites.userImageBoxes[seatIndex].visible = false;
         }
+        // Also hide username sprite
+        if (seatIndex >= 0 && seatIndex < this.sprites.usernameBoxes.length) {
+            this.sprites.usernameBoxes[seatIndex].visible = false;
+        }
     }
     
     hideMasterStatusSprite() {
@@ -1197,6 +1295,10 @@ class DinerScene {
         // Also hide all image sprites
         for (let i = 0; i < this.sprites.userImageBoxes.length; i++) {
             this.sprites.userImageBoxes[i].visible = false;
+        }
+        // Also hide all username sprites
+        for (let i = 0; i < this.sprites.usernameBoxes.length; i++) {
+            this.sprites.usernameBoxes[i].visible = false;
         }
     }
     

@@ -4,9 +4,14 @@ import com.meshiya.service.TTSService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Map;
 
 @RestController
@@ -17,6 +22,9 @@ public class TTSController {
     
     @Autowired
     private TTSService ttsService;
+    
+    @Value("${tts.storage.type:file}")
+    private String storageType;
     
     /**
      * Convert text to speech via POST request
@@ -76,5 +84,50 @@ public class TTSController {
             "defaultVoice", ttsService.getDefaultVoice()
         );
         return ResponseEntity.ok(status);
+    }
+    
+    /**
+     * Serve TTS audio files from the cache directory
+     */
+    @GetMapping("/audio/{filename}")
+    public ResponseEntity<Resource> getAudioFile(@PathVariable String filename) {
+        // Only serve local files - MinIO files use presigned URLs directly
+        if ("minio".equals(storageType)) {
+            logger.warn("Direct file serving not supported for MinIO storage: {}", filename);
+            return ResponseEntity.notFound().build();
+        }
+        
+        try {
+            // Security check: only allow files with expected pattern (support both wav and mp3)
+            if (!filename.matches("tts_[a-f0-9]{32}\\.(wav|mp3)")) {
+                logger.warn("Invalid audio filename requested: {}", filename);
+                return ResponseEntity.badRequest().build();
+            }
+            
+            Path filePath = Paths.get("./tts-cache").resolve(filename);
+            Resource resource = new UrlResource(filePath.toUri());
+            
+            if (!resource.exists() || !resource.isReadable()) {
+                logger.warn("Audio file not found or not readable: {}", filePath);
+                return ResponseEntity.notFound().build();
+            }
+            
+            logger.info("Serving TTS audio file: {}", filename);
+            
+            // Determine content type based on file extension
+            MediaType contentType = filename.endsWith(".mp3") ? 
+                MediaType.parseMediaType("audio/mpeg") : 
+                MediaType.parseMediaType("audio/wav");
+            
+            return ResponseEntity.ok()
+                    .contentType(contentType)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
+                    .header(HttpHeaders.CACHE_CONTROL, "public, max-age=3600") // 1 hour cache
+                    .body(resource);
+                    
+        } catch (Exception e) {
+            logger.error("Error serving audio file {}: {}", filename, e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }

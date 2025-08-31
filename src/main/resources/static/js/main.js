@@ -85,6 +85,11 @@ class MeshiyaApp {
         this.wsClient.onAvatarStateUpdate((message) => {
             this.handleAvatarStateUpdate(message);
         });
+        
+        // Connect TTS ready notifications to UI manager
+        this.wsClient.onTTSReady((message) => {
+            this.uiManager.handleTTSReady(message);
+        });
     }
     
     handleAvatarStateUpdate(message) {

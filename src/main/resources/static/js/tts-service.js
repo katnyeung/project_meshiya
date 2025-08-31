@@ -9,9 +9,11 @@ class TTSService {
         this.timeout = 10000;
         this.configLoaded = true; // No need to load config from server anymore
         
-        // Queue system for managing TTS requests
-        this.speechQueue = [];
+        // Queue system for managing TTS - separate generation and playback
+        this.speechQueue = []; // Queue of requests to generate
+        this.audioQueue = [];  // Queue of generated audio blobs ready to play
         this.isProcessingQueue = false;
+        this.isProcessingPlayback = false;
         
         // Simple timestamp cutoff to prevent TTS spam on reload
         // Add 2 second buffer to allow page loading to complete
@@ -91,97 +93,146 @@ class TTSService {
 
         console.log('🔊 TTS: Adding to queue:', speechRequest.id, '-', cleanText.substring(0, 50) + '...');
 
-        // Add to queue
+        // Add to speech queue for generation
         this.speechQueue.push(speechRequest);
         
         // Update queue display
         this.notifyQueueUpdate();
 
-        // Start processing queue if not already processing
-        if (!this.isProcessingQueue) {
-            this.processQueue();
-        }
+        // Start processing speech generation immediately (parallel generation)
+        this.generateSpeechAsync(speechRequest);
+
+        // Note: Don't start playback queue here - it will be started when audio is ready
     }
 
     /**
-     * Process the speech queue one by one
+     * Generate speech asynchronously and add to audio queue
+     * @param {Object} speechRequest - The speech request object
      */
-    async processQueue() {
-        if (this.isProcessingQueue || this.speechQueue.length === 0) {
-            return;
-        }
-
-        this.isProcessingQueue = true;
-        console.log('🔊 TTS: Starting queue processing. Queue length:', this.speechQueue.length);
-
-        while (this.speechQueue.length > 0) {
-            const request = this.speechQueue.shift();
-            console.log('🔊 TTS: Processing queue item:', request.id, '-', request.text.substring(0, 50) + '...');
-
-            try {
-                await this.generateAndPlaySpeech(request.text, request.voice);
-                console.log('🔊 TTS: Completed queue item:', request.id);
-            } catch (error) {
-                console.error('🔊 TTS: Error processing queue item:', request.id, error);
-            }
-
-            // Update queue display
-            this.notifyQueueUpdate();
-        }
-
-        this.isProcessingQueue = false;
-        console.log('🔊 TTS: Queue processing completed');
-    }
-
-    /**
-     * Generate speech and play audio (internal method)
-     * @param {string} text - The text to convert to speech
-     * @param {string} voice - Voice to use
-     * @returns {Promise<void>}
-     */
-    async generateAndPlaySpeech(text, voice) {
+    async generateSpeechAsync(speechRequest) {
         try {
-            console.log('🔊 TTS: Converting text to speech:', text);
-
-            // Prepare request data
-            const requestData = {
-                text: text,
-                voice: voice
-            };
-
-            // Make API call to Spring Boot TTS proxy
-            const response = await fetch(this.apiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestData)
-            });
-
-            console.log('🔊 TTS: API Response status:', response.status, response.statusText);
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('🔊 TTS: API Error response:', errorText);
-                throw new Error(`TTS API request failed: ${response.status} ${response.statusText}`);
-            }
-
-            // Get audio data as blob
-            const audioBlob = await response.blob();
-            console.log('🔊 TTS: Received audio blob size:', audioBlob.size, 'bytes');
+            console.log('🔊 TTS: Generating speech for:', speechRequest.id);
             
-            // Create audio URL and play
-            const audioUrl = URL.createObjectURL(audioBlob);
-            await this.playAudio(audioUrl);
-
+            const audioBlob = await this.generateSpeechBlob(speechRequest.text, speechRequest.voice);
+            
+            // Create audio item with the original request info
+            const audioItem = {
+                id: speechRequest.id,
+                text: speechRequest.text,
+                voice: speechRequest.voice,
+                audioBlob: audioBlob,
+                audioUrl: URL.createObjectURL(audioBlob),
+                timestamp: speechRequest.timestamp
+            };
+            
+            // Add to audio queue in correct order
+            this.audioQueue.push(audioItem);
+            console.log('🔊 TTS: Audio ready for:', speechRequest.id, '- Queue length:', this.audioQueue.length);
+            
+            // Remove from speech generation queue
+            const index = this.speechQueue.findIndex(req => req.id === speechRequest.id);
+            if (index !== -1) {
+                this.speechQueue.splice(index, 1);
+            }
+            
+            this.notifyQueueUpdate();
+            
+            // Restart playback queue if it's not running and we have audio ready
+            if (!this.isProcessingPlayback && this.audioQueue.length > 0) {
+                console.log('🔊 TTS: Restarting playback queue - audio is ready');
+                this.processPlaybackQueue();
+            }
+            
         } catch (error) {
-            console.error('🔊 TTS Error:', error);
+            console.error('🔊 TTS: Error generating speech for:', speechRequest.id, error);
+            
+            // Remove failed request from speech queue
+            const index = this.speechQueue.findIndex(req => req.id === speechRequest.id);
+            if (index !== -1) {
+                this.speechQueue.splice(index, 1);
+                this.notifyQueueUpdate();
+            }
             
             // Show user-friendly error message
             if (window.meshiya && window.meshiya.uiManager) {
                 window.meshiya.uiManager.addSystemMessage('TTS service unavailable');
             }
         }
+    }
+
+    /**
+     * Process the audio playback queue sequentially
+     */
+    async processPlaybackQueue() {
+        if (this.isProcessingPlayback) {
+            console.log('🔊 TTS: Playback queue already processing, skipping');
+            return;
+        }
+
+        this.isProcessingPlayback = true;
+        console.log('🔊 TTS: Starting playback queue processing - Audio queue length:', this.audioQueue.length);
+
+        while (this.audioQueue.length > 0) {
+            const audioItem = this.audioQueue.shift();
+            console.log('🔊 TTS: Playing audio:', audioItem.id, '-', audioItem.text.substring(0, 50) + '...');
+
+            try {
+                await this.playAudio(audioItem.audioUrl);
+                console.log('🔊 TTS: Completed playback:', audioItem.id);
+                
+                // Clean up the URL after playback
+                URL.revokeObjectURL(audioItem.audioUrl);
+                
+            } catch (error) {
+                console.error('🔊 TTS: Error playing audio:', audioItem.id, error);
+                URL.revokeObjectURL(audioItem.audioUrl);
+            }
+
+            // Update queue display
+            this.notifyQueueUpdate();
+        }
+
+        this.isProcessingPlayback = false;
+        console.log('🔊 TTS: Playback queue processing completed');
+    }
+
+    /**
+     * Generate speech blob (without playing)
+     * @param {string} text - The text to convert to speech
+     * @param {string} voice - Voice to use
+     * @returns {Promise<Blob>} - Audio blob
+     */
+    async generateSpeechBlob(text, voice) {
+        console.log('🔊 TTS: Converting text to speech:', text.substring(0, 50) + '...');
+
+        // Prepare request data
+        const requestData = {
+            text: text,
+            voice: voice
+        };
+
+        // Make API call to Spring Boot TTS proxy
+        const response = await fetch(this.apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestData)
+        });
+
+        console.log('🔊 TTS: API Response status:', response.status, response.statusText);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('🔊 TTS: API Error response:', errorText);
+            throw new Error(`TTS API request failed: ${response.status} ${response.statusText}`);
+        }
+
+        // Get audio data as blob
+        const audioBlob = await response.blob();
+        console.log('🔊 TTS: Generated audio blob size:', audioBlob.size, 'bytes');
+        
+        return audioBlob;
     }
 
     /**
@@ -270,10 +321,10 @@ class TTSService {
     }
 
     /**
-     * Stop current audio playback and clear queue
+     * Stop current audio playback and clear all queues
      */
     stop() {
-        console.log('🔊 TTS: Stopping TTS and clearing queue');
+        console.log('🔊 TTS: Stopping TTS and clearing all queues');
         
         // Stop current audio
         if (this.currentAudio && this.isPlaying) {
@@ -282,7 +333,7 @@ class TTSService {
             this.isPlaying = false;
         }
         
-        // Clear the queue
+        // Clear all queues
         this.clearQueue();
     }
     
@@ -299,15 +350,28 @@ class TTSService {
     }
     
     /**
-     * Clear the speech queue
+     * Clear all queues
      */
     clearQueue() {
-        const previousLength = this.speechQueue.length;
-        this.speechQueue = [];
-        this.isProcessingQueue = false;
+        const speechQueueLength = this.speechQueue.length;
+        const audioQueueLength = this.audioQueue.length;
         
-        if (previousLength > 0) {
-            console.log('🔊 TTS: Cleared queue of', previousLength, 'items');
+        // Clean up audio URLs before clearing
+        this.audioQueue.forEach(audioItem => {
+            if (audioItem.audioUrl) {
+                URL.revokeObjectURL(audioItem.audioUrl);
+            }
+        });
+        
+        // Clear both queues
+        this.speechQueue = [];
+        this.audioQueue = [];
+        this.isProcessingQueue = false;
+        this.isProcessingPlayback = false;
+        
+        const totalCleared = speechQueueLength + audioQueueLength;
+        if (totalCleared > 0) {
+            console.log('🔊 TTS: Cleared queues - Speech:', speechQueueLength, 'Audio:', audioQueueLength);
             this.notifyQueueUpdate();
         }
     }
@@ -319,9 +383,9 @@ class TTSService {
         console.log('🔊 TTS: Skipping current audio');
         this.stopCurrent();
         
-        // Continue processing queue if there are more items
-        if (this.speechQueue.length > 0 && !this.isProcessingQueue) {
-            this.processQueue();
+        // Continue processing playback if there are more audio items ready
+        if (this.audioQueue.length > 0 && !this.isProcessingPlayback) {
+            this.processPlaybackQueue();
         }
     }
 
@@ -417,12 +481,18 @@ class TTSService {
      * Get current queue status
      */
     getQueueStatus() {
+        const totalQueue = this.speechQueue.length + this.audioQueue.length;
+        const currentPlayingItem = this.isPlaying && this.audioQueue.length > 0 ? 
+                                  this.audioQueue[0].text.substring(0, 50) + '...' : null;
+        
         return {
-            queueLength: this.speechQueue.length,
-            isProcessing: this.isProcessingQueue,
+            queueLength: totalQueue,
+            speechQueueLength: this.speechQueue.length,
+            audioQueueLength: this.audioQueue.length,
+            isProcessing: this.isProcessingQueue || this.isProcessingPlayback,
+            isGenerating: this.speechQueue.length > 0,
             isPlaying: this.isPlaying,
-            currentItem: this.isProcessingQueue && this.speechQueue.length > 0 ? 
-                        this.speechQueue[0].text.substring(0, 50) + '...' : null
+            currentItem: currentPlayingItem
         };
     }
     
@@ -430,12 +500,23 @@ class TTSService {
      * Get queue contents for display
      */
     getQueue() {
-        return this.speechQueue.map(item => ({
+        const speechItems = this.speechQueue.map(item => ({
             id: item.id,
             text: item.text.length > 100 ? item.text.substring(0, 100) + '...' : item.text,
             voice: item.voice,
-            timestamp: item.timestamp
+            timestamp: item.timestamp,
+            status: 'generating'
         }));
+        
+        const audioItems = this.audioQueue.map(item => ({
+            id: item.id,
+            text: item.text.length > 100 ? item.text.substring(0, 100) + '...' : item.text,
+            voice: item.voice,
+            timestamp: item.timestamp,
+            status: 'ready'
+        }));
+        
+        return [...speechItems, ...audioItems];
     }
     
     /**
