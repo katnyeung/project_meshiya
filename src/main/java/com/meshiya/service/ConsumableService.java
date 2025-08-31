@@ -52,7 +52,7 @@ public class ConsumableService {
     /**
      * Add consumable when order is served (with optional image data)
      */
-    public void addConsumableWithImage(String userId, String roomId, Integer seatId, MenuItem menuItem, String imageData) {
+    public void addConsumableWithImage(String userId, String roomId, Integer seatId, MenuItem menuItem, String imageUrl) {
         // Validate parameters
         if (seatId == null || userId == null || roomId == null || menuItem == null) {
             logger.warn("Invalid parameters for adding consumable: userId={}, roomId={}, seatId={}, menuItem={}", 
@@ -81,10 +81,10 @@ public class ConsumableService {
             userId
         );
         
-        // Add image data if available
-        if (imageData != null && !imageData.trim().isEmpty()) {
-            consumable.setImageData(imageData);
-            logger.info("Added image data to consumable for {}", menuItem.getName());
+        // Add image URL if available
+        if (imageUrl != null && !imageUrl.trim().isEmpty()) {
+            consumable.setImageUrl(imageUrl);
+            logger.info("Added image URL to consumable for {}: {}", menuItem.getName(), imageUrl);
         }
         
         String key = String.format(CONSUMABLES_KEY_PATTERN, roomId, userId);

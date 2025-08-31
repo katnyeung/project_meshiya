@@ -483,4 +483,41 @@ public class SeatService {
             logger.error("Error refreshing user seat data for {}: {}", userId, e.getMessage());
         }
     }
+    
+    /**
+     * Update username for user in seat data (called when username changes)
+     */
+    public void updateUserNameInSeatData(String userId, String newUsername) {
+        try {
+            RoomMapping mapping = getRoomMapping();
+            boolean updated = false;
+            
+            for (RoomInfo room : mapping.getRooms().values()) {
+                for (UserInfo userInfo : room.getSeats().values()) {
+                    if (userInfo.getUserId().equals(userId)) {
+                        String oldUsername = userInfo.getUserName();
+                        userInfo.setUserName(newUsername);
+                        updated = true;
+                        
+                        logger.info("Updated seat username for userId {}: {} -> {} in room {}", 
+                                   userId, oldUsername, newUsername, room.getRoomId());
+                        
+                        // Save updated mapping
+                        saveRoomMapping(mapping);
+                        
+                        // Broadcast the update
+                        broadcastSeatUpdate(room.getRoomId(), room);
+                        return;
+                    }
+                }
+            }
+            
+            if (!updated) {
+                logger.debug("User {} not found in any seat, no username update needed", userId);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Error updating username in seat data for {}: {}", userId, e.getMessage());
+        }
+    }
 }

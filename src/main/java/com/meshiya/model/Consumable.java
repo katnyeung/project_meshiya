@@ -15,7 +15,7 @@ public class Consumable {
     private String roomId;
     private Integer seatId;
     private String userId;
-    private String imageData; // Base64 encoded image data for generated food images
+    private String imageUrl; // MinIO URL for generated food images
     
     // Default constructor
     public Consumable() {}
@@ -107,12 +107,12 @@ public class Consumable {
         this.userId = userId;
     }
     
-    public String getImageData() {
-        return imageData;
+    public String getImageUrl() {
+        return imageUrl;
     }
     
-    public void setImageData(String imageData) {
-        this.imageData = imageData;
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
     }
     
     /**

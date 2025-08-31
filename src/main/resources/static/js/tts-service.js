@@ -106,6 +106,54 @@ class TTSService {
     }
 
     /**
+     * Add server-generated audio to queue (for server-side TTS)
+     * @param {string} messageKey - Unique key for this audio
+     * @param {string} audioUrl - URL of the server-generated audio
+     * @param {Element} indicator - TTS indicator element
+     * @param {Function} cleanupCallback - Callback for cleanup after playback
+     */
+    async addServerAudioToQueue(messageKey, audioUrl, indicator, cleanupCallback) {
+        try {
+            console.log('🔊 TTS: Adding server audio to queue:', messageKey);
+            
+            // Create audio item with server-provided data
+            const audioItem = {
+                id: messageKey,
+                text: `Server TTS (${messageKey})`,
+                voice: 'server',
+                audioUrl: audioUrl,
+                audioBlob: null, // Not needed for server audio
+                timestamp: Date.now(),
+                indicator: indicator,
+                cleanupCallback: cleanupCallback
+            };
+            
+            // Add to audio queue in correct order (server audio maintains timestamp order)
+            this.audioQueue.push(audioItem);
+            console.log('🔊 TTS: Server audio added to queue - Queue length:', this.audioQueue.length);
+            
+            this.notifyQueueUpdate();
+            
+            // Start playback queue if not already running
+            if (!this.isProcessingPlayback && this.audioQueue.length > 0) {
+                console.log('🔊 TTS: Starting playback queue for server audio');
+                this.processPlaybackQueue();
+            }
+            
+        } catch (error) {
+            console.error('🔊 TTS: Error adding server audio to queue:', error);
+            
+            // Hide indicator and run cleanup on error
+            if (indicator) {
+                indicator.style.display = 'none';
+            }
+            if (cleanupCallback) {
+                cleanupCallback();
+            }
+        }
+    }
+
+    /**
      * Generate speech asynchronously and add to audio queue
      * @param {Object} speechRequest - The speech request object
      */
@@ -177,15 +225,42 @@ class TTSService {
             console.log('🔊 TTS: Playing audio:', audioItem.id, '-', audioItem.text.substring(0, 50) + '...');
 
             try {
+                // Update indicator to show playing
+                if (audioItem.indicator) {
+                    audioItem.indicator.textContent = '🔊'; // Playing indicator
+                }
+                
                 await this.playAudio(audioItem.audioUrl);
                 console.log('🔊 TTS: Completed playback:', audioItem.id);
                 
-                // Clean up the URL after playback
-                URL.revokeObjectURL(audioItem.audioUrl);
+                // Hide indicator and run cleanup
+                if (audioItem.indicator) {
+                    audioItem.indicator.style.display = 'none';
+                }
+                if (audioItem.cleanupCallback) {
+                    audioItem.cleanupCallback();
+                }
+                
+                // Clean up the URL after playback (only for generated URLs, not server URLs)
+                if (audioItem.audioBlob) {
+                    URL.revokeObjectURL(audioItem.audioUrl);
+                }
                 
             } catch (error) {
                 console.error('🔊 TTS: Error playing audio:', audioItem.id, error);
-                URL.revokeObjectURL(audioItem.audioUrl);
+                
+                // Hide indicator and run cleanup on error
+                if (audioItem.indicator) {
+                    audioItem.indicator.style.display = 'none';
+                }
+                if (audioItem.cleanupCallback) {
+                    audioItem.cleanupCallback();
+                }
+                
+                // Clean up URL on error
+                if (audioItem.audioBlob) {
+                    URL.revokeObjectURL(audioItem.audioUrl);
+                }
             }
 
             // Update queue display

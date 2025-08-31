@@ -122,23 +122,17 @@ class UIManager {
                     const decodedId = atob(sessionId);
                     console.log('Found session ID in URL:', decodedId);
                     
-                    // Try to get username from localStorage based on sessionId
+                    // Try to get username from localStorage (fallback only)
                     const userData = this.getUserDataForSession(decodedId);
+                    const fallbackUsername = userData ? userData.username : 'Guest';
                     
-                    if (userData && userData.username) {
-                        // User exists with this session - auto-connect
-                        window.wsClient.userId = decodedId;
-                        window.wsClient.username = userData.username;
-                        
-                        window.wsClient.connectWithExistingSession(decodedId, userData.username);
-                        
-                        this.isLoggedIn = true;
-                        this.showMainInterface();
-                        this.addSystemMessage(`Welcome back, ${userData.username}! Session restored.`);
-                    } else {
-                        // New session - prepare for username entry
-                        this.prepareForNewSession(decodedId);
-                    }
+                    // Always try to connect - WebSocket will fetch current username from DB if registered
+                    window.wsClient.userId = decodedId;
+                    window.wsClient.connectWithExistingSession(decodedId, fallbackUsername);
+                    
+                    this.isLoggedIn = true;
+                    this.showMainInterface();
+                    this.addSystemMessage(`Connecting... Session restored.`);
                     
                     // Keep the sessionId in URL (don't clean it)
                     // window.history.replaceState({}, document.title, window.location.pathname);
@@ -874,52 +868,42 @@ class UIManager {
      */
     async playTTSAudio(messageEl, messageKey, audioUrl) {
         try {
-            // Update indicator to show playing
+            // Update indicator to show queued
             const ttsIndicator = messageEl.querySelector('.tts-indicator');
             if (ttsIndicator) {
                 ttsIndicator.style.display = 'inline';
-                ttsIndicator.textContent = '🔊'; // Playing indicator
+                ttsIndicator.textContent = '⏳'; // Queued indicator
             }
             
-            // Play the audio using the provided URL (supports both MP3 and WAV)
-            const audio = new Audio(audioUrl);
+            console.log(`🔊 TTS: Adding server-generated audio to queue for messageKey: ${messageKey}`);
             
-            // Handle audio events
-            audio.onloadstart = () => {
-                console.log(`🔊 TTS: Started loading audio for messageKey: ${messageKey}`);
-            };
-            
-            audio.oncanplay = () => {
-                console.log(`🔊 TTS: Audio ready to play for messageKey: ${messageKey}`);
-            };
-            
-            audio.onended = () => {
-                console.log(`🔊 TTS: Audio playback finished for messageKey: ${messageKey}`);
+            // Add to TTS service queue instead of playing directly
+            if (this.ttsService) {
+                await this.ttsService.addServerAudioToQueue(messageKey, audioUrl, ttsIndicator, () => {
+                    // Cleanup callback when audio finishes
+                    this.pendingTTSMessages.delete(messageKey);
+                });
+            } else {
+                console.warn('🔊 TTS: TTS service not available, playing directly');
+                // Fallback to direct play if TTS service unavailable
+                const audio = new Audio(audioUrl);
                 
-                // Hide indicator when done
-                if (ttsIndicator) {
-                    ttsIndicator.style.display = 'none';
-                }
+                audio.onended = () => {
+                    if (ttsIndicator) {
+                        ttsIndicator.style.display = 'none';
+                    }
+                    this.pendingTTSMessages.delete(messageKey);
+                };
                 
-                // Remove from pending messages if it was there
-                this.pendingTTSMessages.delete(messageKey);
-            };
-            
-            audio.onerror = (error) => {
-                console.error(`🔊 TTS: Audio playback error for messageKey: ${messageKey}`, error);
+                audio.onerror = () => {
+                    if (ttsIndicator) {
+                        ttsIndicator.style.display = 'none';
+                    }
+                    this.pendingTTSMessages.delete(messageKey);
+                };
                 
-                // Hide indicator on error
-                if (ttsIndicator) {
-                    ttsIndicator.style.display = 'none';
-                }
-                
-                // Remove from pending messages if it was there
-                this.pendingTTSMessages.delete(messageKey);
-            };
-            
-            // Start playback
-            await audio.play();
-            console.log(`🔊 TTS: Started playing audio for messageKey: ${messageKey}`);
+                await audio.play();
+            }
             
         } catch (error) {
             console.error(`🔊 TTS: Failed to play audio for messageKey: ${messageKey}`, error);

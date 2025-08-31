@@ -2,6 +2,7 @@ package com.meshiya.model;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "registered_users")
@@ -20,6 +21,9 @@ public class RegisteredUser {
     @Column(nullable = false)
     private String password;
     
+    @Column(name = "user_key", unique = true, nullable = false, length = 36)
+    private String userKey;
+    
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
     
@@ -28,6 +32,7 @@ public class RegisteredUser {
     
     public RegisteredUser() {
         this.createdAt = LocalDateTime.now();
+        this.userKey = UUID.randomUUID().toString();
     }
     
     public RegisteredUser(String username, String email, String password) {
@@ -70,6 +75,14 @@ public class RegisteredUser {
         this.password = password;
     }
     
+    public String getUserKey() {
+        return userKey;
+    }
+    
+    public void setUserKey(String userKey) {
+        this.userKey = userKey;
+    }
+    
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -92,7 +105,7 @@ public class RegisteredUser {
     
     @Override
     public String toString() {
-        return String.format("RegisteredUser{id=%d, username='%s', email='%s', createdAt=%s, lastLogin=%s}", 
-                           id, username, email, createdAt, lastLogin);
+        return String.format("RegisteredUser{id=%d, username='%s', email='%s', userKey='%s', createdAt=%s, lastLogin=%s}", 
+                           id, username, email, userKey, createdAt, lastLogin);
     }
 }
