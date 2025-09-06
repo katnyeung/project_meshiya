@@ -4,6 +4,7 @@ import com.meshiya.model.Room;
 import com.meshiya.dto.ChatMessage;
 import com.meshiya.dto.UserProfile;
 import com.meshiya.model.MessageType;
+import com.meshiya.model.MasterStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -42,6 +43,10 @@ public class RoomService {
     
     @Autowired
     private TTSService ttsService;
+    
+    @Autowired
+    @Lazy
+    private MasterService masterService;
     
     private final ObjectMapper objectMapper;
     
@@ -148,6 +153,13 @@ public class RoomService {
         if (message.getType() == MessageType.AI_MESSAGE) {
             message.setRoomId(roomId); // Ensure roomId is set for TTS broadcasting
             ttsService.processAIMessageForTTSWithCallback(message, () -> {
+                // Only change to CONVERSING if not in order processing states
+                MasterStatus currentStatus = masterService.getCurrentStatus();
+                if (currentStatus != MasterStatus.PREPARING_ORDER && 
+                    currentStatus != MasterStatus.SERVING && 
+                    currentStatus != MasterStatus.BUSY) {
+                    masterService.updateStatusWithTimeout(MasterStatus.CONVERSING, 10);
+                }
                 // Broadcast after TTS is ready
                 messagingTemplate.convertAndSend("/topic/room/" + roomId, message);
                 logger.info("AI message broadcast after TTS ready: {}", message.getContent());

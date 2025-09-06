@@ -6,24 +6,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.event.ContextRefreshedEvent;
-import org.springframework.context.event.EventListener;
-import org.springframework.http.*;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
+import software.amazon.awssdk.services.batch.model.JobDetail;
 
-import io.minio.MinioClient;
-import io.minio.BucketExistsArgs;
-import io.minio.MakeBucketArgs;
-import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
-import io.minio.GetPresignedObjectUrlArgs;
-import io.minio.http.Method;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -33,15 +19,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.io.ByteArrayInputStream;
 
 @Service
 public class TTSService {
     
     private static final Logger logger = LoggerFactory.getLogger(TTSService.class);
     
-    @Value("${tts.api.url:http://localhost:8000/tts}")
-    private String ttsApiUrl;
+    @Value("${tts.mode:aws-batch}")
+    private String mode;
     
     @Value("${tts.voice.default:am_michael}")
     private String defaultVoice;
@@ -49,28 +34,20 @@ public class TTSService {
     @Value("${tts.enabled:true}")
     private boolean enabled;
     
-    @Value("${tts.api.timeout:10000}")
+    @Value("${tts.timeout:120000}")
     private int timeoutMs;
-    
-    @Value("${tts.storage.type:file}")
-    private String storageType;
     
     @Value("${tts.storage.ttl-hours:2}")
     private int ttlHours;
     
-    @Value("${tts.api.format:mp3}")
+    @Value("${tts.format:mp3}")
     private String audioFormat;
-    
-    @Value("${minio.bucket.tts:meshiya-tts-audio}")
-    private String ttsBucket;
     
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
     
     @Autowired
-    private MinioClient minioClient;
-    
-    private final RestTemplate restTemplate;
+    private AWSBatchService awsBatchService;
     
     // Cache for storing TTS audio URLs by message content hash
     private final ConcurrentHashMap<String, TTSCacheEntry> ttsCache = new ConcurrentHashMap<>();
@@ -83,12 +60,12 @@ public class TTSService {
     
     private static class TTSCacheEntry {
         final String audioUrl;
-        final String objectKey; // MinIO object key for cleanup
+        final String jobId;
         final LocalDateTime timestamp;
         
-        TTSCacheEntry(String audioUrl, String objectKey) {
+        TTSCacheEntry(String audioUrl, String jobId) {
             this.audioUrl = audioUrl;
-            this.objectKey = objectKey;
+            this.jobId = jobId;
             this.timestamp = LocalDateTime.now();
         }
         
@@ -98,65 +75,21 @@ public class TTSService {
     }
     
     public TTSService() {
-        this.restTemplate = new RestTemplate();
-        // Set timeout for requests
-        this.restTemplate.setRequestFactory(new org.springframework.http.client.SimpleClientHttpRequestFactory());
-        ((org.springframework.http.client.SimpleClientHttpRequestFactory) restTemplate.getRequestFactory())
-                .setConnectTimeout(timeoutMs);
-        ((org.springframework.http.client.SimpleClientHttpRequestFactory) restTemplate.getRequestFactory())
-                .setReadTimeout(timeoutMs);
-                
         // Start cache cleanup scheduler - run every 30 minutes
         scheduler.scheduleAtFixedRate(this::cleanupExpiredCache, 30, 30, TimeUnit.MINUTES);
     }
     
     /**
-     * Initialize MinIO bucket after all dependencies are injected
-     */
-    @EventListener(ContextRefreshedEvent.class)
-    public void initializeStorage() {
-        if ("minio".equals(storageType)) {
-            try {
-                initializeBucket();
-                logger.info("TTS MinIO storage initialized successfully");
-            } catch (Exception e) {
-                logger.error("Failed to initialize TTS MinIO storage: {}", e.getMessage(), e);
-            }
-        }
-    }
-    
-    /**
-     * Initialize TTS bucket if it doesn't exist
-     */
-    private void initializeBucket() {
-        try {
-            boolean bucketExists = minioClient.bucketExists(BucketExistsArgs.builder()
-                    .bucket(ttsBucket)
-                    .build());
-                    
-            if (!bucketExists) {
-                minioClient.makeBucket(MakeBucketArgs.builder()
-                        .bucket(ttsBucket)
-                        .build());
-                logger.info("Created TTS bucket: {}", ttsBucket);
-            } else {
-                logger.info("TTS bucket already exists: {}", ttsBucket);
-            }
-        } catch (Exception e) {
-            logger.error("Failed to initialize TTS bucket: {}", e.getMessage(), e);
-            throw new RuntimeException("TTS MinIO initialization failed", e);
-        }
-    }
-    
-    /**
-     * Convert text to speech using the configured TTS API
-     * @param text The text to convert
-     * @param voice The voice to use (optional, uses default if null)
-     * @return The audio data as byte array
+     * Generate speech using AWS Batch
      */
     public byte[] generateSpeech(String text, String voice) {
         if (!enabled) {
             logger.warn("TTS service is disabled");
+            return new byte[0];
+        }
+        
+        if (!"aws-batch".equals(mode)) {
+            logger.warn("TTS mode is not set to aws-batch");
             return new byte[0];
         }
         
@@ -166,56 +99,41 @@ public class TTSService {
         }
         
         try {
-            // Clean text for TTS
             String cleanText = cleanTextForTTS(text);
-            
-            // Use default voice if none provided
             if (voice == null || voice.trim().isEmpty()) {
                 voice = defaultVoice;
             }
             
-            logger.info("Generating TTS for text: '{}' with voice: {}", 
-                       cleanText.length() > 50 ? cleanText.substring(0, 50) + "..." : cleanText, voice);
+            logger.info("Submitting TTS batch job for text: '{}'", 
+                       cleanText.length() > 50 ? cleanText.substring(0, 50) + "..." : cleanText);
             
-            // Prepare request
-            Map<String, String> requestBody = new HashMap<>();
-            requestBody.put("text", cleanText);
-            requestBody.put("voice", voice);
-            requestBody.put("format", audioFormat); // Request MP3 format
+            String filename = generateMessageKey(cleanText, voice);
+            String jobId = awsBatchService.submitTTSJob(cleanText, filename, voice);
             
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            HttpEntity<Map<String, String>> entity = new HttpEntity<>(requestBody, headers);
-            
-            // Make request to TTS API
-            long startTime = System.currentTimeMillis();
-            ResponseEntity<byte[]> response = restTemplate.exchange(
-                ttsApiUrl, 
-                HttpMethod.POST, 
-                entity, 
-                byte[].class
-            );
-            long duration = System.currentTimeMillis() - startTime;
-            
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                byte[] audioData = response.getBody();
-                logger.info("TTS generation successful: {} bytes in {}ms", audioData.length, duration);
-                return audioData;
-            } else {
-                logger.warn("TTS API returned status: {}", response.getStatusCode());
+            if (jobId == null) {
+                logger.error("Failed to submit TTS job");
                 return new byte[0];
             }
             
+            // Wait for job completion
+            String audioUrl = waitForTTSJobCompletion(jobId, filename);
+            if (audioUrl != null) {
+                // In a real implementation, you'd download the audio from S3
+                // For now, return empty bytes as the audio is stored in S3
+                logger.info("TTS job completed, audio available at: {}", audioUrl);
+                return new byte[0]; // Audio is in S3, not returned as bytes
+            }
+            
+            return new byte[0];
+            
         } catch (Exception e) {
-            logger.error("Error calling TTS API: {}", e.getMessage(), e);
+            logger.error("Error calling TTS AWS Batch: {}", e.getMessage(), e);
             return new byte[0];
         }
     }
     
     /**
-     * Process AI messages for centralized TTS generation with caching
-     * This prevents duplicate TTS requests from multiple users
+     * Process AI messages for centralized TTS generation with caching using AWS Batch
      */
     public void processAIMessageForTTS(ChatMessage message) {
         processAIMessageForTTSWithCallback(message, null);
@@ -223,11 +141,14 @@ public class TTSService {
     
     /**
      * Process AI messages for TTS with callback when ready
-     * @param message The AI message to process
-     * @param onTTSReady Callback to execute when TTS is ready (can be null)
      */
     public void processAIMessageForTTSWithCallback(ChatMessage message, Runnable onTTSReady) {
         if (!enabled || message.getType() != MessageType.AI_MESSAGE) {
+            return;
+        }
+        
+        if (!"aws-batch".equals(mode)) {
+            logger.warn("TTS mode is not set to aws-batch, skipping TTS processing");
             return;
         }
         
@@ -246,21 +167,19 @@ public class TTSService {
         if (cachedEntry != null && !cachedEntry.isExpired(ttlHours)) {
             logger.info("TTS cache hit for messageKey={}, broadcasting existing audio", messageKey);
             broadcastTTSReady(message.getRoomId(), messageKey, cachedEntry.audioUrl);
-            // Execute callback if provided (for synchronized message broadcasting)
             if (onTTSReady != null) {
                 onTTSReady.run();
             }
             return;
         }
         
-        // Check if already processing to prevent duplicate requests
+        // Check if already processing
         CompletableFuture<String> existingRequest = processingRequests.get(messageKey);
         if (existingRequest != null) {
             logger.info("TTS already processing for messageKey={}, waiting for completion", messageKey);
             existingRequest.thenAccept(audioUrl -> {
                 if (audioUrl != null) {
                     broadcastTTSReady(message.getRoomId(), messageKey, audioUrl);
-                    // Execute callback if provided (for synchronized message broadcasting)
                     if (onTTSReady != null) {
                         onTTSReady.run();
                     }
@@ -272,23 +191,23 @@ public class TTSService {
         // Start new TTS generation
         CompletableFuture<String> ttsTask = CompletableFuture.supplyAsync(() -> {
             try {
-                logger.info("Generating TTS for messageKey={}", messageKey);
-                byte[] audioData = generateSpeech(text, defaultVoice);
+                logger.info("Generating TTS via AWS Batch for messageKey={}", messageKey);
+                String cleanText = cleanTextForTTS(text);
                 
-                if (audioData.length > 0) {
-                    String[] urlAndKey = saveAudioFile(messageKey, audioData);
-                    String audioUrl = urlAndKey[0];
-                    String objectKey = urlAndKey[1];
-                    
-                    // Cache the result
-                    ttsCache.put(messageKey, new TTSCacheEntry(audioUrl, objectKey));
-                    logger.info("TTS generated and cached: messageKey={}, audioUrl={}", messageKey, audioUrl);
-                    
-                    return audioUrl;
-                } else {
-                    logger.warn("TTS generation failed for messageKey={}", messageKey);
-                    return null;
+                String jobId = awsBatchService.submitTTSJob(cleanText, messageKey, defaultVoice);
+                if (jobId != null) {
+                    String audioUrl = waitForTTSJobCompletion(jobId, messageKey);
+                    if (audioUrl != null) {
+                        // Cache the result
+                        ttsCache.put(messageKey, new TTSCacheEntry(audioUrl, jobId));
+                        logger.info("TTS generated and cached via AWS Batch: messageKey={}, audioUrl={}", messageKey, audioUrl);
+                        return audioUrl;
+                    }
                 }
+                
+                logger.warn("TTS generation failed via AWS Batch for messageKey={}", messageKey);
+                return null;
+                
             } catch (Exception e) {
                 logger.error("Error in TTS generation task for messageKey={}: {}", messageKey, e.getMessage(), e);
                 return null;
@@ -304,7 +223,6 @@ public class TTSService {
                 processingRequests.remove(messageKey);
                 if (audioUrl != null) {
                     broadcastTTSReady(message.getRoomId(), messageKey, audioUrl);
-                    // Execute callback if provided (for synchronized message broadcasting)
                     if (onTTSReady != null) {
                         onTTSReady.run();
                     }
@@ -313,6 +231,66 @@ public class TTSService {
                 logger.error("Error broadcasting TTS result for messageKey={}: {}", messageKey, e.getMessage(), e);
             }
         });
+    }
+    
+    /**
+     * Wait for TTS job completion and extract audio URL
+     */
+    private String waitForTTSJobCompletion(String jobId, String filename) {
+        try {
+            long startTime = System.currentTimeMillis();
+            long maxWaitTime = timeoutMs;
+            
+            while (System.currentTimeMillis() - startTime < maxWaitTime) {
+                String status = awsBatchService.getJobStatus(jobId);
+                
+                if ("SUCCEEDED".equals(status)) {
+                    JobDetail jobDetail = awsBatchService.getJobDetails(jobId);
+                    String audioUrl = extractAudioUrlFromJob(jobDetail, filename);
+                    
+                    if (audioUrl != null) {
+                        long duration = System.currentTimeMillis() - startTime;
+                        logger.info("TTS generation completed in {}ms - URL: {}", duration, audioUrl);
+                        return audioUrl;
+                    }
+                }
+                else if ("FAILED".equals(status)) {
+                    logger.error("TTS job failed (jobId: {})", jobId);
+                    return null;
+                }
+                
+                Thread.sleep(3000); // 3 seconds
+            }
+            
+            logger.warn("TTS job timed out (jobId: {})", jobId);
+            return null;
+            
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.error("TTS job wait interrupted");
+            return null;
+        } catch (Exception e) {
+            logger.error("Error waiting for TTS job: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+    
+    /**
+     * Extract audio URL from job result
+     */
+    private String extractAudioUrlFromJob(JobDetail jobDetail, String filename) {
+        try {
+            if (jobDetail != null && jobDetail.attempts() != null && !jobDetail.attempts().isEmpty()) {
+                // Job completed (we'll assume success if we got here and status was SUCCEEDED)
+                String timestamp = String.valueOf(System.currentTimeMillis() / 1000);
+                return String.format("https://meshiya-tts-audio.s3.eu-west-2.amazonaws.com/tts/%s_%s.%s", 
+                                   filename, timestamp, audioFormat);
+            }
+            return null;
+        } catch (Exception e) {
+            logger.error("Error extracting audio URL from job result: {}", e.getMessage(), e);
+            return null;
+        }
     }
     
     /**
@@ -327,79 +305,10 @@ public class TTSService {
             for (byte b : hash) {
                 sb.append(String.format("%02x", b));
             }
-            // Take first 32 characters for consistent length with frontend
             return sb.toString().substring(0, 32);
         } catch (Exception e) {
             logger.error("Error generating message key: {}", e.getMessage(), e);
             return String.valueOf(text.hashCode() + voice.hashCode());
-        }
-    }
-    
-    /**
-     * Save audio data and return [URL, objectKey]
-     */
-    private String[] saveAudioFile(String messageKey, byte[] audioData) {
-        if ("minio".equals(storageType)) {
-            return saveToMinIO(messageKey, audioData);
-        } else {
-            return saveToLocal(messageKey, audioData);
-        }
-    }
-    
-    /**
-     * Save audio data to MinIO and return [presignedURL, objectKey]
-     */
-    private String[] saveToMinIO(String messageKey, byte[] audioData) {
-        try {
-            String objectKey = "tts_" + messageKey + "." + audioFormat;
-            
-            // Upload to MinIO
-            minioClient.putObject(PutObjectArgs.builder()
-                    .bucket(ttsBucket)
-                    .object(objectKey)
-                    .stream(new ByteArrayInputStream(audioData), audioData.length, -1)
-                    .contentType("audio/mpeg")
-                    .build());
-            
-            // Get presigned URL (valid for 1 hour)
-            String presignedUrl = minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
-                    .method(Method.GET)
-                    .bucket(ttsBucket)
-                    .object(objectKey)
-                    .expiry(1, TimeUnit.HOURS)
-                    .build());
-            
-            logger.info("Audio saved to MinIO: {} ({} bytes)", objectKey, audioData.length);
-            return new String[]{presignedUrl, objectKey};
-            
-        } catch (Exception e) {
-            logger.error("Error saving audio to MinIO for messageKey={}: {}", messageKey, e.getMessage(), e);
-            return new String[]{null, null};
-        }
-    }
-    
-    /**
-     * Save audio data to local file and return [URL, fileName] (fallback)
-     */
-    private String[] saveToLocal(String messageKey, byte[] audioData) {
-        try {
-            // Create local cache directory if needed
-            Path cacheDir = Paths.get("./tts-cache");
-            Files.createDirectories(cacheDir);
-            
-            // Save audio file
-            String fileName = "tts_" + messageKey + "." + audioFormat;
-            Path filePath = cacheDir.resolve(fileName);
-            Files.write(filePath, audioData);
-            
-            // Return URL for serving the file
-            String audioUrl = "/api/tts/audio/" + fileName;
-            logger.info("Audio file saved locally: {} ({} bytes)", filePath, audioData.length);
-            
-            return new String[]{audioUrl, fileName};
-        } catch (Exception e) {
-            logger.error("Error saving audio file locally for messageKey={}: {}", messageKey, e.getMessage(), e);
-            return new String[]{null, null};
         }
     }
     
@@ -425,25 +334,16 @@ public class TTSService {
     
     /**
      * Clean text for better TTS pronunciation
-     * @param text Raw text from Master response
-     * @return Cleaned text suitable for TTS
      */
     private String cleanTextForTTS(String text) {
         return text
-            // Remove markdown formatting
-            .replaceAll("\\*\\*", "") // Remove bold
-            .replaceAll("\\*", "")    // Remove italic/actions
-            .replaceAll("`", "")      // Remove code formatting
-            .replaceAll("_", " ")     // Replace underscores with spaces
-            
-            // Clean up action descriptions in asterisks
-            .replaceAll("\\*([^*]+)\\*", "$1") // Keep content, remove asterisks
-            
-            // Normalize whitespace
+            .replaceAll("\\*\\*", "")
+            .replaceAll("\\*", "")
+            .replaceAll("`", "")
+            .replaceAll("_", " ")
+            .replaceAll("\\*([^*]+)\\*", "$1")
             .replaceAll("\\s+", " ")
             .trim()
-            
-            // Ensure proper sentence endings for natural speech
             .replaceAll("([.!?])\\s*$", "$1");
     }
     
@@ -451,7 +351,7 @@ public class TTSService {
      * Check if TTS service is enabled
      */
     public boolean isEnabled() {
-        return enabled;
+        return enabled && "aws-batch".equals(mode);
     }
     
     /**
@@ -462,19 +362,20 @@ public class TTSService {
     }
     
     /**
-     * Get TTS API configuration
+     * Get TTS configuration
      */
     public Map<String, Object> getConfig() {
         Map<String, Object> config = new HashMap<>();
         config.put("enabled", enabled);
+        config.put("mode", mode);
         config.put("defaultVoice", defaultVoice);
-        config.put("apiUrl", ttsApiUrl);
         config.put("timeout", timeoutMs);
+        config.put("awsBatchAvailable", awsBatchService.isAvailable());
         return config;
     }
     
     /**
-     * Cleanup expired cache entries and delete associated files
+     * Cleanup expired cache entries
      */
     private void cleanupExpiredCache() {
         if (!enabled) {
@@ -483,10 +384,8 @@ public class TTSService {
         
         logger.info("Starting TTS cache cleanup");
         int removedEntries = 0;
-        int removedFiles = 0;
         
         try {
-            // Find expired entries
             var expiredKeys = ttsCache.entrySet().stream()
                 .filter(entry -> entry.getValue().isExpired(ttlHours))
                 .map(Map.Entry::getKey)
@@ -496,36 +395,11 @@ public class TTSService {
                 TTSCacheEntry entry = ttsCache.remove(messageKey);
                 if (entry != null) {
                     removedEntries++;
-                    
-                    // Try to delete the associated file/object
-                    try {
-                        if ("minio".equals(storageType) && entry.objectKey != null) {
-                            // Delete from MinIO
-                            minioClient.removeObject(RemoveObjectArgs.builder()
-                                    .bucket(ttsBucket)
-                                    .object(entry.objectKey)
-                                    .build());
-                            removedFiles++;
-                            logger.debug("Deleted expired TTS object from MinIO: {}", entry.objectKey);
-                        } else {
-                            // Delete local file (fallback)
-                            String fileName = "tts_" + messageKey + "." + audioFormat;
-                            Path filePath = Paths.get("./tts-cache").resolve(fileName);
-                            
-                            if (Files.exists(filePath)) {
-                                Files.delete(filePath);
-                                removedFiles++;
-                                logger.debug("Deleted expired TTS file: {}", fileName);
-                            }
-                        }
-                    } catch (Exception e) {
-                        logger.warn("Failed to delete TTS file/object for messageKey {}: {}", messageKey, e.getMessage());
-                    }
+                    logger.debug("Removed expired TTS cache entry: {}", messageKey);
                 }
             }
             
-            logger.info("TTS cache cleanup completed: removed {} cache entries, deleted {} files", 
-                       removedEntries, removedFiles);
+            logger.info("TTS cache cleanup completed: removed {} cache entries", removedEntries);
             
         } catch (Exception e) {
             logger.error("Error during TTS cache cleanup: {}", e.getMessage(), e);

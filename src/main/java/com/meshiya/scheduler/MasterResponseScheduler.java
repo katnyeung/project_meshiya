@@ -40,9 +40,12 @@ public class MasterResponseScheduler {
     @Autowired
     private RedisService redisService;
     
-    // Message buffers per room for batch processing
+    // Message queue system for processing multiple messages
+    private final Map<String, Queue<ChatMessage>> messageQueues = new HashMap<>();
+    private final Map<String, AtomicBoolean> roomProcessingStatus = new HashMap<>();
+    
+    // Message buffers per room for batch processing (kept for compatibility)
     private final Map<String, Queue<ChatMessage>> messageBuffers = new HashMap<>();
-    private final AtomicBoolean isProcessing = new AtomicBoolean(false);
     
     // Response timing control per room
     private final Map<String, LocalDateTime> lastResponses = new HashMap<>();
@@ -112,11 +115,14 @@ public class MasterResponseScheduler {
                 logger.debug("Room {}: Conversation extended due to new message", roomId);
             }
             
-            // Get or create buffer for this room
-            messageBuffers.computeIfAbsent(roomId, k -> new ConcurrentLinkedQueue<>()).offer(message);
+            // Add to queue for immediate processing (queue system only now)
+            messageQueues.computeIfAbsent(roomId, k -> new ConcurrentLinkedQueue<>()).offer(message);
             
-            logger.debug("Added message to buffer for room {}: {} (buffer size: {}, conversation active: {})", 
-                        roomId, message.getContent(), messageBuffers.get(roomId).size(), 
+            // Process queue immediately if not already processing for this room
+            processMessageQueue(roomId);
+            
+            logger.debug("Added message to queue for room {}: {} (queue size: {}, conversation active: {})", 
+                        roomId, message.getContent(), messageQueues.get(roomId).size(), 
                         conversationActive.getOrDefault(roomId, false));
         }
     }
@@ -175,15 +181,12 @@ public class MasterResponseScheduler {
                 continue;
             }
             
-            // Apply smart triggering logic
-            String triggerReason = determineTriggerReason(roomId, buffer, isInConversation, now);
-            if (triggerReason != null) {
-                logger.info("🚀 Room {}: TRIGGERED by: {}", roomId, triggerReason);
-                analyzeAndRespond(roomId);
-            } else {
-                logger.info("⏸️ Room {}: No trigger - buffer: {}, conversation: {}, density check needed", 
-                           roomId, buffer.size(), isInConversation);
-            }
+            // Process any queued messages for this room (primary system)
+            processMessageQueue(roomId);
+            
+            // DISABLE BATCH PROCESSING - Queue system handles all messages now
+            logger.debug("⏭️ Room {}: Batch processing disabled - using queue system only (buffer: {}, queue active)", 
+                       roomId, buffer != null ? buffer.size() : 0);
         }
     }
     
@@ -315,15 +318,104 @@ public class MasterResponseScheduler {
     }
     
     /**
-     * Main analysis method - always sends to LLM for decision
+     * Queue-based message processor for handling multiple messages per room
      */
-    private void analyzeAndRespond(String roomId) {
-        if (isProcessing.get()) {
-            logger.debug("Already processing, skipping this cycle");
+    private void processMessageQueue(String roomId) {
+        // Get or create processing status for this room
+        AtomicBoolean roomProcessing = roomProcessingStatus.computeIfAbsent(roomId, k -> new AtomicBoolean(false));
+        
+        if (roomProcessing.get()) {
+            logger.debug("Room {}: Already processing queue, message added to queue", roomId);
             return;
         }
         
-        isProcessing.set(true);
+        Queue<ChatMessage> queue = messageQueues.get(roomId);
+        if (queue == null || queue.isEmpty()) {
+            return;
+        }
+        
+        roomProcessing.set(true);
+        
+        try {
+            // Process messages one by one from the queue
+            while (!queue.isEmpty()) {
+                ChatMessage nextMessage = queue.poll();
+                if (nextMessage != null) {
+                    logger.info("Room {}: Processing queued message: {}", roomId, nextMessage.getContent());
+                    processIndividualMessage(roomId, nextMessage);
+                    
+                    // Small delay between processing messages to prevent overwhelming
+                    Thread.sleep(500);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Room {}: Message queue processing interrupted", roomId);
+        } catch (Exception e) {
+            logger.error("Room {}: Error processing message queue", roomId, e);
+        } finally {
+            roomProcessing.set(false);
+        }
+    }
+    
+    /**
+     * Process individual message and generate response
+     */
+    private void processIndividualMessage(String roomId, ChatMessage message) {
+        try {
+            // Create message list with the individual message
+            List<ChatMessage> messagesToAnalyze = new ArrayList<>();
+            messagesToAnalyze.add(message);
+            
+            // Add some context from recent messages if available
+            List<ChatMessage> recentMessages = roomService.getRoomMessages(roomId);
+            if (recentMessages != null && recentMessages.size() > 1) {
+                // Add last 3 messages for context (excluding the current one)
+                int contextCount = Math.min(3, recentMessages.size() - 1);
+                for (int i = recentMessages.size() - contextCount - 1; i < recentMessages.size() - 1; i++) {
+                    if (i >= 0) {
+                        messagesToAnalyze.add(0, recentMessages.get(i)); // Add at beginning for chronological order
+                    }
+                }
+            }
+            
+            logger.info("Room {}: Processing message '{}' with {} context messages", 
+                       roomId, message.getContent(), messagesToAnalyze.size() - 1);
+            
+            // Update LLM call timestamp
+            lastLlmCalls.put(roomId, LocalDateTime.now());
+            
+            // Generate response
+            Optional<String> response = masterService.generateResponse(messagesToAnalyze);
+            
+            if (response.isPresent()) {
+                sendMasterResponse(response.get(), roomId);
+                lastResponses.put(roomId, LocalDateTime.now());
+                logger.info("Room {}: Generated response for message: {}", roomId, message.getContent());
+                
+                // Message processed successfully by queue system
+            } else {
+                logger.info("Room {}: No response generated for message: {}", roomId, message.getContent());
+            }
+            
+        } catch (Exception e) {
+            logger.error("Room {}: Error processing individual message: {}", roomId, message.getContent(), e);
+        }
+    }
+    
+    /**
+     * Main analysis method - always sends to LLM for decision (Legacy method for batch processing)
+     */
+    private void analyzeAndRespond(String roomId) {
+        // Get or create processing status for this room  
+        AtomicBoolean roomProcessing = roomProcessingStatus.computeIfAbsent(roomId, k -> new AtomicBoolean(false));
+        
+        if (roomProcessing.get()) {
+            logger.debug("Room {}: Already processing, skipping batch analysis", roomId);
+            return;
+        }
+        
+        roomProcessing.set(true);
         
         try {
             List<ChatMessage> messagesToAnalyze = extractMessagesForAnalysis(roomId);
@@ -351,7 +443,7 @@ public class MasterResponseScheduler {
         } catch (Exception e) {
             logger.error("Room {}: Error during conversation analysis", roomId, e);
         } finally {
-            isProcessing.set(false);
+            roomProcessing.set(false);
         }
     }
     
@@ -405,12 +497,15 @@ public class MasterResponseScheduler {
      * Special analysis for idle engagement scenarios
      */
     private void analyzeAndRespondForIdleEngagement(String roomId) {
-        if (isProcessing.get()) {
+        // Get or create processing status for this room
+        AtomicBoolean roomProcessing = roomProcessingStatus.computeIfAbsent(roomId, k -> new AtomicBoolean(false));
+        
+        if (roomProcessing.get()) {
             logger.debug("Already processing, skipping idle engagement for room {}", roomId);
             return;
         }
         
-        isProcessing.set(true);
+        roomProcessing.set(true);
         
         try {
             // Get recent conversation context from Redis for idle engagement
@@ -448,7 +543,7 @@ public class MasterResponseScheduler {
         } catch (Exception e) {
             logger.error("Room {}: Error during idle engagement analysis", roomId, e);
         } finally {
-            isProcessing.set(false);
+            roomProcessing.set(false);
         }
     }
     
@@ -481,7 +576,8 @@ public class MasterResponseScheduler {
         Map<String, Object> stats = new HashMap<>();
         
         // Overall stats
-        stats.put("isProcessing", isProcessing.get());
+        stats.put("roomProcessingStatus", roomProcessingStatus.size());
+        stats.put("totalMessageQueues", messageQueues.size());
         stats.put("minSecondsBetweenResponses", MIN_SECONDS_BETWEEN_RESPONSES);
         stats.put("minSecondsBetweenLlmCalls", MIN_SECONDS_BETWEEN_LLM_CALLS);
         stats.put("totalRooms", messageBuffers.size());

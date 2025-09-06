@@ -1,0 +1,111 @@
+server:
+  port: 8080
+
+spring:
+  # Database Configuration (Production)
+  datasource:
+    url: jdbc:mariadb://meshiya-db.cd8qake2a3w4.eu-west-2.rds.amazonaws.com:3306/meshiya
+    username: ${DB_USERNAME:meshiyauser}
+    password: ${DB_PASSWORD}
+  
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MariaDBDialect
+  
+  data:
+    redis:
+      host: ${REDIS_HOST:redis-10889.c338.eu-west-2-1.ec2.redns.redis-cloud.com}
+      port: ${REDIS_PORT:10889}
+      password: ${REDIS_PASSWORD}
+      timeout: 2000ms
+  
+  websocket:
+    allowed-origins: "http://3.8.131.90:8080,http://localhost:8080"
+    
+  # File Upload Configuration
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+meshiya:
+  diner:
+    max-seats: 8
+    ai-response-delay: 3000
+    max-context-messages: 20
+  user:
+    timeout:
+      minutes: 10
+
+# AWS Configuration
+aws:
+  region: eu-west-2
+  batch:
+    image-queue: meshiya-image-queue
+    tts-queue: meshiya-tts-queue
+
+# MinIO Configuration (now pointing to S3)
+minio:
+  endpoint: https://s3.eu-west-2.amazonaws.com
+  access-key: ${AWS_ACCESS_KEY_ID}
+  secret-key: ${AWS_SECRET_ACCESS_KEY}
+  bucket:
+    default: meshiya-user-images
+    tts: meshiya-tts-audio
+    food-images: meshiya-food-images
+
+# Image Generation Configuration (now using AWS Batch)
+image:
+  generation:
+    enabled: true
+    mode: aws-batch
+    timeout: 300000
+  storage:
+    type: s3
+
+# TTS Configuration (now using AWS Batch)
+tts:
+  mode: aws-batch
+  timeout: 120000
+  format: mp3
+  voice:
+    default: ${TTS_DEFAULT_VOICE:am_michael}
+  enabled: ${TTS_ENABLED:true}
+  storage:
+    type: s3
+    ttl-hours: 2
+
+# LLM Configuration
+llm:
+  chat:
+    provider: perplexity
+    api:
+      url: https://api.perplexity.ai/chat/completions
+      key: ${PERPLEXITY_API_KEY}
+    model: sonar
+    timeout: 30000
+
+  order:
+    provider: perplexity
+    api:
+      url: https://api.perplexity.ai/chat/completions
+      key: ${PERPLEXITY_API_KEY}
+    model: sonar
+    timeout: 15000
+
+# Swagger/OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+    tryItOutEnabled: true
+  show-actuator: false

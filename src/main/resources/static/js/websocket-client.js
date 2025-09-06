@@ -34,14 +34,21 @@ class WebSocketClient {
         this.establishConnection();
     }
 
-    connectWithExistingSession(userId, username) {
+    connectWithExistingSession(userId, username, isRegisteredUser = false) {
         this.userId = userId;
         
         console.log('Creating WebSocket connection with existing session');
-        console.log('Initial username:', username, 'UserID:', userId);
+        console.log('Initial username:', username, 'UserID:', userId, 'Registered:', isRegisteredUser);
         
-        // For registered users, fetch current username from backend (single source of truth)
-        this.fetchCurrentUsernameAndConnect(username);
+        if (isRegisteredUser) {
+            // For registered users, use the verified username directly
+            this.username = username;
+            this.storeUserDataLocally();
+            this.establishConnection();
+        } else {
+            // For guest users, fetch current username from backend as fallback
+            this.fetchCurrentUsernameAndConnect(username);
+        }
     }
 
     async fetchCurrentUsernameAndConnect(fallbackUsername) {

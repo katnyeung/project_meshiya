@@ -23,7 +23,9 @@ class UIManager {
      * Initialize after WebSocket client is ready
      */
     initialize() {
-        this.checkForExistingUser();
+        this.checkForExistingUser().catch(error => {
+            console.error('Error checking existing user:', error);
+        });
         
         // Start periodic cleanup of ready TTS messages
         setInterval(() => {
@@ -110,7 +112,7 @@ class UIManager {
     /**
      * Simple check for existing user data
      */
-    checkForExistingUser() {
+    async checkForExistingUser() {
         try {
             // Check for sessionId in URL first
             const urlParams = new URLSearchParams(window.location.search);
@@ -122,20 +124,40 @@ class UIManager {
                     const decodedId = atob(sessionId);
                     console.log('Found session ID in URL:', decodedId);
                     
-                    // Try to get username from localStorage (fallback only)
+                    // Check if user has valid login cookie
+                    const loginCookie = this.getLoginCookie();
+                    if (loginCookie) {
+                        console.log('Found login cookie, verifying registered user session...');
+                        // Verify login cookie is still valid
+                        const isValidLogin = await this.verifyLoginCookie();
+                        if (isValidLogin) {
+                            console.log('✅ Valid registered user session restored');
+                            // Connect as registered user
+                            window.wsClient.userId = decodedId;
+                            window.wsClient.connectWithExistingSession(decodedId, loginCookie, true);
+                            
+                            this.isLoggedIn = true;
+                            this.showMainInterface();
+                            this.addSystemMessage(`Welcome back, ${loginCookie}! Session restored.`);
+                            return;
+                        } else {
+                            console.log('❌ Login cookie expired, clearing cookies...');
+                            this.clearAllCookies();
+                        }
+                    }
+                    
+                    // No valid login cookie - restore as guest session
                     const userData = this.getUserDataForSession(decodedId);
                     const fallbackUsername = userData ? userData.username : 'Guest';
                     
-                    // Always try to connect - WebSocket will fetch current username from DB if registered
+                    console.log('Restoring as guest session with username:', fallbackUsername);
                     window.wsClient.userId = decodedId;
-                    window.wsClient.connectWithExistingSession(decodedId, fallbackUsername);
+                    window.wsClient.connectWithExistingSession(decodedId, fallbackUsername, false);
                     
                     this.isLoggedIn = true;
                     this.showMainInterface();
                     this.addSystemMessage(`Connecting... Session restored.`);
                     
-                    // Keep the sessionId in URL (don't clean it)
-                    // window.history.replaceState({}, document.title, window.location.pathname);
                     return;
                 } catch (e) {
                     console.warn('Invalid session ID in URL');
@@ -164,6 +186,45 @@ class UIManager {
             console.warn('Failed to retrieve session data:', error);
         }
         return null;
+    }
+    
+    /**
+     * Get login cookie value
+     */
+    getLoginCookie() {
+        const cookies = document.cookie.split(';');
+        for (let cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'meshiyaLoggedIn') {
+                return decodeURIComponent(value);
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Verify login cookie is still valid
+     */
+    async verifyLoginCookie() {
+        try {
+            const response = await fetch('/api/profile');
+            const data = await response.json();
+            return data.success && data.isLoggedIn;
+        } catch (error) {
+            console.warn('Failed to verify login cookie:', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Clear all Meshiya cookies
+     */
+    clearAllCookies() {
+        const cookiesToClear = ['meshiyaLoggedIn', 'meshiyaRegistered', 'meshiyaSessionId'];
+        for (let cookieName of cookiesToClear) {
+            document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+        }
+        console.log('All Meshiya cookies cleared');
     }
     
     /**
