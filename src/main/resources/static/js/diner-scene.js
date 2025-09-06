@@ -1108,14 +1108,39 @@ class DinerScene {
         return canvas;
     }
     
+    /**
+     * Calculate display size for consumable based on type for realistic proportions
+     * @param {Object} consumable - The consumable item
+     * @param {number} baseSize - Base size (128px)
+     * @returns {number} - The scaled size
+     */
+    getConsumableDisplaySize(consumable, baseSize) {
+        switch (consumable.itemType) {
+            case 'DRINK':
+                // Drinks scaled to 75% (increased from 50% - 150% of previous)
+                return Math.round(baseSize * 0.75);
+            case 'FOOD':
+            case 'DESSERT':
+                // Food scaled up to 180% (increased from 150% - 120% of previous)
+                return Math.round(baseSize * 1.8);
+            default:
+                // Default size for unknown types
+                return baseSize;
+        }
+    }
+    
     createCombinedImageCanvas(consumablesWithImages, callback) {
-        const imageSize = 128;
+        const baseImageSize = 128;
         const spacing = 8; // Small gap between images
-        const totalWidth = (imageSize * consumablesWithImages.length) + (spacing * (consumablesWithImages.length - 1));
+        
+        // Calculate individual sizes and total width based on item types
+        const itemSizes = consumablesWithImages.map(consumable => this.getConsumableDisplaySize(consumable, baseImageSize));
+        const totalWidth = itemSizes.reduce((sum, size) => sum + size, 0) + (spacing * (consumablesWithImages.length - 1));
+        const maxHeight = Math.max(...itemSizes); // Use largest item height for canvas
         
         const canvas = document.createElement('canvas');
         canvas.width = totalWidth;
-        canvas.height = imageSize;
+        canvas.height = maxHeight;
         const ctx = canvas.getContext('2d');
         
         // Clear canvas
@@ -1124,15 +1149,21 @@ class DinerScene {
         let loadedImages = 0;
         const totalImages = consumablesWithImages.length;
         
-        // Load all images and draw them side by side
+        // Load all images and draw them side by side with type-based scaling
+        let currentX = 0;
         consumablesWithImages.forEach((consumable, index) => {
             const img = new Image();
+            const itemSize = itemSizes[index];
+            
             img.onload = () => {
-                // Calculate position for this image
-                const x = index * (imageSize + spacing);
+                // Center smaller items vertically
+                const y = (maxHeight - itemSize) / 2;
                 
-                // Draw the image
-                ctx.drawImage(img, x, 0, imageSize, imageSize);
+                // Draw the image with type-based scaling
+                ctx.drawImage(img, currentX, y, itemSize, itemSize);
+                console.log(`Drawing ${consumable.itemType} "${consumable.itemName}" at size ${itemSize}x${itemSize} (${consumable.itemType === 'DRINK' ? '75% size' : 'food 180% size'})`);
+                
+                currentX += itemSize + spacing;
                 
                 loadedImages++;
                 if (loadedImages === totalImages) {
@@ -1469,7 +1500,7 @@ class DinerScene {
         
         // Text
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 15px Trebuchet MS';
+        ctx.font = 'bold 13px Trebuchet MS';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         

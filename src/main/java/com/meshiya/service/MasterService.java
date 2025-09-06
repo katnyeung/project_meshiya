@@ -235,7 +235,8 @@ public class MasterService {
             
             if (response != null && !response.trim().isEmpty()) {
                 response = cleanLlmResponse(response.trim());
-                updateStatusWithTimeout(MasterStatus.CONVERSING, 10);
+                // Don't change state here for regular conversation - TTS callback will handle it
+                // Order processing already set PREPARING_ORDER state above
                 return Optional.of(response);
             }
             
