@@ -5,6 +5,7 @@ import com.meshiya.dto.ChatMessage;
 import com.meshiya.model.MessageType;
 import com.meshiya.model.RegisteredUser;
 import com.meshiya.repository.RegisteredUserRepository;
+import com.meshiya.repository.DynamoUserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -64,8 +65,11 @@ public class UserService {
     @Autowired
     private SeatService seatService;
     
-    @Autowired
+    @Autowired(required = false)
     private RegisteredUserRepository registeredUserRepository;
+    
+    @Autowired
+    private DynamoUserRepository dynamoUserRepository;
     
     @Autowired
     private MinioClient minioClient;
@@ -425,10 +429,10 @@ public class UserService {
      */
     public RegisteredUser registerUser(String username, String email, String password) {
         // Check if username or email already exists
-        if (registeredUserRepository.existsByUsername(username)) {
+        if (dynamoUserRepository.existsByUsername(username)) {
             throw new RuntimeException("Username already exists");
         }
-        if (registeredUserRepository.existsByEmail(email)) {
+        if (dynamoUserRepository.existsByEmail(email)) {
             throw new RuntimeException("Email already exists");
         }
         
@@ -437,7 +441,7 @@ public class UserService {
         
         // Create and save the registered user
         RegisteredUser registeredUser = new RegisteredUser(username, email, hashedPassword);
-        RegisteredUser savedUser = registeredUserRepository.save(registeredUser);
+        RegisteredUser savedUser = dynamoUserRepository.saveRegisteredUser(registeredUser);
         
         // Initialize MinIO bucket if it doesn't exist
         initializeBucket();
@@ -450,7 +454,12 @@ public class UserService {
      * Authenticate a user login
      */
     public RegisteredUser authenticateUser(String username, String password) {
-        Optional<RegisteredUser> userOpt = registeredUserRepository.findByUsernameOrEmail(username, username);
+        // Try to find user by username first, then by email
+        Optional<RegisteredUser> userOpt = dynamoUserRepository.findRegisteredUserByUsername(username);
+        if (!userOpt.isPresent()) {
+            // If not found by username, try email (since users can login with email)
+            userOpt = dynamoUserRepository.findRegisteredUserByEmail(username);
+        }
         
         if (userOpt.isPresent()) {
             RegisteredUser user = userOpt.get();
@@ -459,7 +468,7 @@ public class UserService {
             if (passwordEncoder.matches(password, user.getPassword())) {
                 // Update last login
                 user.updateLastLogin();
-                registeredUserRepository.save(user);
+                dynamoUserRepository.saveRegisteredUser(user);
                 
                 logger.info("User authenticated: {}", user.getUsername());
                 return user;
@@ -474,14 +483,14 @@ public class UserService {
      * Check if username is registered
      */
     public boolean isUserRegistered(String username) {
-        return registeredUserRepository.existsByUsername(username);
+        return dynamoUserRepository.existsByUsername(username);
     }
     
     /**
      * Load registered user data into profile
      */
     private void loadRegisteredUserData(UserProfile profile, String username) {
-        Optional<RegisteredUser> registeredUserOpt = registeredUserRepository.findByUsername(username);
+        Optional<RegisteredUser> registeredUserOpt = dynamoUserRepository.findRegisteredUserByUsername(username);
         
         if (registeredUserOpt.isPresent()) {
             RegisteredUser user = registeredUserOpt.get();
@@ -510,7 +519,7 @@ public class UserService {
     public String uploadUserImage(String username, String imageType, MultipartFile file) {
         try {
             // Get user's secure key
-            Optional<RegisteredUser> userOpt = registeredUserRepository.findByUsername(username);
+            Optional<RegisteredUser> userOpt = dynamoUserRepository.findRegisteredUserByUsername(username);
             if (userOpt.isEmpty()) {
                 throw new RuntimeException("User not found");
             }
@@ -549,7 +558,7 @@ public class UserService {
      */
     public String getImageUrl(String username, String imageType) {
         // Get user's secure key first
-        Optional<RegisteredUser> userOpt = registeredUserRepository.findByUsername(username);
+        Optional<RegisteredUser> userOpt = dynamoUserRepository.findRegisteredUserByUsername(username);
         if (userOpt.isPresent()) {
             return getImageUrlByUserKey(userOpt.get().getUserKey(), imageType);
         }
@@ -589,7 +598,7 @@ public class UserService {
     public void deleteUserImage(String username, String imageType) {
         try {
             // Get user's secure key
-            Optional<RegisteredUser> userOpt = registeredUserRepository.findByUsername(username);
+            Optional<RegisteredUser> userOpt = dynamoUserRepository.findRegisteredUserByUsername(username);
             if (userOpt.isEmpty()) {
                 throw new RuntimeException("User not found");
             }
@@ -687,13 +696,13 @@ public class UserService {
         newUsername = newUsername.trim();
         
         // Check if new username already exists (but not for current user)
-        Optional<RegisteredUser> existingUser = registeredUserRepository.findByUsername(newUsername);
+        Optional<RegisteredUser> existingUser = dynamoUserRepository.findRegisteredUserByUsername(newUsername);
         if (existingUser.isPresent() && !existingUser.get().getUsername().equals(currentUsername)) {
             throw new RuntimeException("Username already exists");
         }
         
         // Find current user
-        Optional<RegisteredUser> currentUserOpt = registeredUserRepository.findByUsername(currentUsername);
+        Optional<RegisteredUser> currentUserOpt = dynamoUserRepository.findRegisteredUserByUsername(currentUsername);
         if (currentUserOpt.isEmpty()) {
             throw new RuntimeException("User not found");
         }
@@ -703,7 +712,7 @@ public class UserService {
         
         // Update username in database
         user.setUsername(newUsername);
-        RegisteredUser savedUser = registeredUserRepository.save(user);
+        RegisteredUser savedUser = dynamoUserRepository.saveRegisteredUser(user);
         
         // Update all active user profiles in Redis that match this username
         updateAllActiveUserProfileUsernames(oldUsername, newUsername);

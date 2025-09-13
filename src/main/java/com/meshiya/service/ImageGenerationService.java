@@ -30,7 +30,7 @@ public class ImageGenerationService {
     // Cache for tracking ongoing jobs
     private final ConcurrentHashMap<String, CompletableFuture<String>> activeJobs = new ConcurrentHashMap<>();
     
-    @Value("${image.generation.mode:aws-batch}")
+    @Value("${image.generation.mode:runpod}")
     private String mode;
     
     @Value("${image.generation.timeout:300000}")
@@ -42,8 +42,11 @@ public class ImageGenerationService {
     @Autowired
     private AWSBatchService awsBatchService;
     
+    @Autowired
+    private RunPodService runPodService;
+    
     /**
-     * Generate an image for a food/drink item using AWS Batch
+     * Generate an image for a food/drink item using AWS Batch or RunPod
      * @return S3 URL of the generated image, or null if generation failed
      */
     public String generateFoodImage(String itemName, String itemDescription, String itemType) {
@@ -52,29 +55,43 @@ public class ImageGenerationService {
             return null;
         }
         
-        if (!"aws-batch".equals(mode)) {
-            logger.warn("Image generation mode is not set to aws-batch, returning null");
-            return null;
-        }
-        
         try {
-            logger.info("Submitting AWS Batch job for image generation: {} ({})", itemName, itemType);
+            logger.info("Submitting {} job for image generation: {} ({})", mode, itemName, itemType);
             
             // Create prompt based on item details
             String prompt = createPrompt(itemName, itemDescription, itemType);
             
-            // Submit batch job
-            String jobId = awsBatchService.submitImageGenerationJob(
-                prompt, 
-                itemName,
-                "blurry, low quality, text, watermark", // negative prompt
-                512, // width
-                512, // height  
-                25,  // steps
-                7.0f, // guidance scale
-                null, // seed
-                "realvis" // model name
-            );
+            String jobId;
+            
+            // Submit job based on configured mode
+            if ("runpod".equals(mode)) {
+                jobId = runPodService.submitImageGenerationJob(
+                    prompt, 
+                    itemName,
+                    "blurry, low quality, text, watermark", // negative prompt
+                    512, // width
+                    512, // height  
+                    25,  // steps
+                    7.0f, // guidance scale
+                    null, // seed
+                    "realvis" // model name
+                );
+            } else if ("aws-batch".equals(mode)) {
+                jobId = awsBatchService.submitImageGenerationJob(
+                    prompt, 
+                    itemName,
+                    "blurry, low quality, text, watermark", // negative prompt
+                    512, // width
+                    512, // height  
+                    25,  // steps
+                    7.0f, // guidance scale
+                    null, // seed
+                    "realvis" // model name
+                );
+            } else {
+                logger.warn("Unknown image generation mode: {}, returning null", mode);
+                return null;
+            }
             
             if (jobId == null) {
                 logger.error("Failed to submit image generation job for item: {}", itemName);
@@ -93,7 +110,7 @@ public class ImageGenerationService {
     }
     
     /**
-     * Wait for AWS Batch job completion and extract S3 URL from result
+     * Wait for job completion and extract S3 URL from result
      */
     private String waitForJobCompletion(String jobId, String itemName) {
         try {
@@ -101,21 +118,35 @@ public class ImageGenerationService {
             long maxWaitTime = timeoutMs;
             
             while (System.currentTimeMillis() - startTime < maxWaitTime) {
-                String status = awsBatchService.getJobStatus(jobId);
+                String status;
+                String imageUrl = null;
                 
-                if ("SUCCEEDED".equals(status)) {
-                    // Get job details to extract result from logs
-                    JobDetail jobDetail = awsBatchService.getJobDetails(jobId);
-                    String imageUrl = extractImageUrlFromJob(jobDetail);
+                if ("runpod".equals(mode)) {
+                    status = runPodService.getImageJobStatus(jobId);
                     
-                    if (imageUrl != null) {
-                        long duration = System.currentTimeMillis() - startTime;
-                        logger.info("Image generation completed for {} in {}ms - URL: {}", 
-                                   itemName, duration, imageUrl);
-                        return imageUrl;
+                    if ("COMPLETED".equals(status)) {
+                        JsonNode result = runPodService.getImageJobResult(jobId);
+                        if (result != null && result.has("image_url")) {
+                            imageUrl = result.get("image_url").asText();
+                        }
+                    }
+                } else {
+                    status = awsBatchService.getJobStatus(jobId);
+                    
+                    if ("SUCCEEDED".equals(status)) {
+                        JobDetail jobDetail = awsBatchService.getJobDetails(jobId);
+                        imageUrl = extractImageUrlFromJob(jobDetail);
                     }
                 }
-                else if ("FAILED".equals(status)) {
+                
+                if (imageUrl != null) {
+                    long duration = System.currentTimeMillis() - startTime;
+                    logger.info("Image generation completed for {} in {}ms - URL: {}", 
+                               itemName, duration, imageUrl);
+                    return imageUrl;
+                }
+                
+                if ("FAILED".equals(status) || "ERROR".equals(status)) {
                     logger.error("Image generation job failed for item: {} (jobId: {})", itemName, jobId);
                     return null;
                 }

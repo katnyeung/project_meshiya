@@ -62,7 +62,7 @@ public class MasterResponseScheduler {
     private static final int MIN_SECONDS_BETWEEN_LLM_CALLS = 15; // Faster LLM calls - reduced from 45 to 15
     
     // New conversation timing configurations
-    private static final int CONVERSATION_TIMEOUT_SECONDS = 60; // Keep responding for 1 minute after last message
+    private static final int CONVERSATION_TIMEOUT_SECONDS = 30; // Keep responding for 30 seconds after last master mention
     private static final int IDLE_MONITORING_MINUTES = 2; // Check for proactive engagement after 2min idle
     private static final int DENSITY_CHECK_MINUTES = 3; // Check message density over 3min window
     private static final int DENSITY_THRESHOLD_MESSAGES = 5; // 5 messages triggers conversation leadership
@@ -109,10 +109,14 @@ public class MasterResponseScheduler {
                 conversationStartTime.put(roomId, now);
             }
             
-            // If in conversation mode, extend the conversation timeout
+            // If in conversation mode, only extend if message mentions master or is an order
             if (conversationActive.getOrDefault(roomId, false)) {
-                conversationStartTime.put(roomId, now); // Reset timeout on any message during conversation
-                logger.debug("Room {}: Conversation extended due to new message", roomId);
+                if (mentionsMaster || hasOrderCommand) {
+                    conversationStartTime.put(roomId, now); // Reset timeout only on relevant messages
+                    logger.debug("Room {}: Conversation extended due to master mention or order", roomId);
+                } else {
+                    logger.debug("Room {}: Message during conversation but no master mention - not extending timeout", roomId);
+                }
             }
             
             // Add to queue for immediate processing (queue system only now)
@@ -211,9 +215,22 @@ public class MasterResponseScheduler {
             return null;
         }
         
-        // Trigger 1: Active conversation mode (respond to all messages)
+        // Trigger 1: Active conversation mode (respond only to messages mentioning master or orders)
         if (isInConversation && buffer.size() >= MIN_MESSAGES_BEFORE_ANALYSIS) {
-            return "Active conversation mode - responding to all messages";
+            // Check if any message in buffer mentions master or has order command
+            for (ChatMessage msg : buffer) {
+                String content = msg.getContent().toLowerCase();
+                boolean hasOrderCommand = content.trim().startsWith("/order");
+                boolean mentionsMaster = content.contains("master") || 
+                                       content.contains("chef") || 
+                                       content.contains("bartender") || 
+                                       content.contains("waiter");
+                
+                if (mentionsMaster || hasOrderCommand) {
+                    return "Active conversation mode - message mentions master or has order";
+                }
+            }
+            logger.debug("Room {}: In conversation mode but no messages mention master", roomId);
         }
         
         // Trigger 2: 'master' keyword detection (handled in event listener, but ensure processing)
@@ -226,15 +243,16 @@ public class MasterResponseScheduler {
             }
         }
         
-        // Trigger 3: Message density check (5 messages in 3 minutes)
-        boolean densityTrigger = checkMessageDensity(roomId, now);
-        logger.info("🔍 Room {}: Density check result: {}", roomId, densityTrigger);
-        if (densityTrigger) {
-            return "High message density detected - conversation leadership";
-        }
+        // Trigger 3: Message density check (DISABLED - was causing responses to all messages)
+        // boolean densityTrigger = checkMessageDensity(roomId, now);
+        // logger.info("🔍 Room {}: Density check result: {}", roomId, densityTrigger);
+        // if (densityTrigger) {
+        //     return "High message density detected - conversation leadership";
+        // }
+        logger.debug("Room {}: Message density trigger disabled to prevent responding to all messages", roomId);
         
-        logger.debug("Room {}: No trigger conditions met - buffer size: {}, conversation: {}, density: {}", 
-                   roomId, buffer.size(), isInConversation, densityTrigger);
+        logger.debug("Room {}: No trigger conditions met - buffer size: {}, conversation: {}", 
+                   roomId, buffer.size(), isInConversation);
         return null; // No trigger conditions met
     }
     
@@ -363,6 +381,22 @@ public class MasterResponseScheduler {
      */
     private void processIndividualMessage(String roomId, ChatMessage message) {
         try {
+            // Check if message should trigger master response
+            String content = message.getContent().toLowerCase();
+            boolean hasOrderCommand = content.trim().startsWith("/order");
+            boolean mentionsMaster = content.contains("master") || 
+                                   content.contains("chef") || 
+                                   content.contains("bartender") || 
+                                   content.contains("waiter");
+            
+            boolean isInConversation = conversationActive.getOrDefault(roomId, false);
+            
+            // Only process if message mentions master/order OR if we're in active conversation mode
+            if (!mentionsMaster && !hasOrderCommand) {
+                logger.debug("Room {}: Message '{}' does not mention master or have order - ignoring", roomId, message.getContent());
+                return;
+            }
+            
             // Create message list with the individual message
             List<ChatMessage> messagesToAnalyze = new ArrayList<>();
             messagesToAnalyze.add(message);

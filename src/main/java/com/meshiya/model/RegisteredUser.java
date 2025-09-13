@@ -1,33 +1,17 @@
 package com.meshiya.model;
 
-import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-@Entity
-@Table(name = "registered_users")
+// POJO version - JPA annotations removed for DynamoDB migration
 public class RegisteredUser {
     
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
-    @Column(unique = true, nullable = false, length = 50)
     private String username;
-    
-    @Column(unique = true, nullable = false, length = 100)
     private String email;
-    
-    @Column(nullable = false)
     private String password;
-    
-    @Column(name = "user_key", unique = true, nullable = false, length = 36)
     private String userKey;
-    
-    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
-    
-    @Column(name = "last_login")
     private LocalDateTime lastLogin;
     
     public RegisteredUser() {

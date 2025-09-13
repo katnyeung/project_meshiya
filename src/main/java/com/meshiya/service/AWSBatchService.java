@@ -115,7 +115,7 @@ public class AWSBatchService {
             SubmitJobRequest request = SubmitJobRequest.builder()
                     .jobName("tts-" + System.currentTimeMillis())
                     .jobQueue(ttsQueue)
-                    .jobDefinition("meshiya-tts")
+                    .jobDefinition("meshiya-tts-cpu")
                     .parameters(parameters)
                     .containerOverrides(ContainerOverrides.builder()
                             .environment(environment.entrySet().stream()

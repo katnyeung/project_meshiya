@@ -118,6 +118,13 @@ class WebSocketClient {
         this.connected = true;
         this.notifyConnectionHandlers('connected');
         
+        // Scroll to bottom after initial messages load
+        setTimeout(() => {
+            if (window.meshiya && window.meshiya.uiManager && window.meshiya.uiManager.elements.chatMessages) {
+                window.meshiya.uiManager.elements.chatMessages.scrollTop = window.meshiya.uiManager.elements.chatMessages.scrollHeight;
+            }
+        }, 1000);
+        
         // Subscribe to Room1 messages (includes chat history and new messages)
         this.stompClient.subscribe('/topic/room/room1', (messageOutput) => {
             console.log('Received room message:', messageOutput.body);

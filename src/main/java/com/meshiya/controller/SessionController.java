@@ -75,12 +75,9 @@ public class SessionController {
             return "redirect:/?sessionId=" + existingSessionId;
         }
         
-        // Generate new session ID and redirect
-        String newSessionId = generateSessionId();
-        String encodedSessionId = Base64.getEncoder().encodeToString(newSessionId.getBytes());
-        
-        logger.info("Generated new session ID: {} (encoded: {})", newSessionId, encodedSessionId);
-        return "redirect:/?sessionId=" + encodedSessionId;
+        // No existing session - serve the welcome page for login/register
+        logger.info("No existing session found - serving welcome page for authentication");
+        return "forward:/index.html";
     }
     
     /**

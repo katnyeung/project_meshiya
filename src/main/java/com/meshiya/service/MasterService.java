@@ -2,6 +2,7 @@ package com.meshiya.service;
 
 import com.meshiya.config.MasterConfiguration;
 import com.meshiya.dto.ChatMessage;
+import com.meshiya.dto.UserProfile;
 import com.meshiya.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +38,12 @@ public class MasterService {
     
     @Autowired
     private MasterConfiguration.MasterConfig masterConfig;
+    
+    @Autowired
+    private UserService userService;
+    
+    @Autowired
+    private RoomService roomService;
     
     // Status management
     private MasterStatus currentStatus = MasterStatus.IDLE;
@@ -268,6 +275,16 @@ public class MasterService {
         
         // Check for /order command
         if (content.trim().startsWith("/order ")) {
+            // Restrict /order command to registered users only
+            UserProfile userProfile = userService.getUserProfile(userId);
+            if (userProfile == null || !userProfile.isRegistered()) {
+                logger.warn("Guest user '{}' (userId: {}) attempted to use /order command - access denied", userName, userId);
+                
+                // Send system message directly (no TTS, no Master status change)
+                sendSystemMessage(roomId, "I'm sorry, but ordering is only available to registered users. Please create an account to enjoy our menu offerings.");
+                return Optional.empty(); // Don't change Master status
+            }
+            
             String orderRequest = content.trim().substring(7).trim(); // Remove "/order " prefix
             if (!orderRequest.isEmpty()) {
                 return processLlmOrder(orderRequest, userId, userName, roomId, seatId);
@@ -322,6 +339,25 @@ public class MasterService {
         }
         
         return Optional.of("What would you like? Perhaps some tea or warm food?");
+    }
+    
+    /**
+     * Send a system message directly to the room (no TTS, no Master status change)
+     */
+    private void sendSystemMessage(String roomId, String content) {
+        ChatMessage systemMessage = new ChatMessage();
+        systemMessage.setType(MessageType.SYSTEM_MESSAGE);
+        systemMessage.setContent(content);
+        systemMessage.setUserName("System");
+        systemMessage.setUserId("system");
+        systemMessage.setRoomId(roomId);
+        systemMessage.setSeatId(null);
+        systemMessage.setTimestamp(LocalDateTime.now());
+        
+        // Add to room and broadcast (system messages don't trigger TTS)
+        roomService.addMessageToRoom(roomId, systemMessage);
+        
+        logger.info("System message sent to room {}: '{}'", roomId, content);
     }
     
     /**

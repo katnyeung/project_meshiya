@@ -1073,6 +1073,7 @@ class DinerScene {
         
         // Create a promise-based image loading for base64 data
         const img = new Image();
+        img.crossOrigin = "anonymous"; // Enable CORS for WebGL texture usage
         img.onload = () => {
             // Clear canvas for complete transparency
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1153,6 +1154,7 @@ class DinerScene {
         let currentX = 0;
         consumablesWithImages.forEach((consumable, index) => {
             const img = new Image();
+            img.crossOrigin = "anonymous"; // Enable CORS for WebGL texture usage
             const itemSize = itemSizes[index];
             
             img.onload = () => {

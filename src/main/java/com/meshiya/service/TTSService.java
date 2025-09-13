@@ -49,6 +49,12 @@ public class TTSService {
     @Autowired
     private AWSBatchService awsBatchService;
     
+    @Autowired
+    private RunPodService runPodService;
+    
+    @Autowired
+    private TTSServiceLocal ttsServiceLocal;
+    
     // Cache for storing TTS audio URLs by message content hash
     private final ConcurrentHashMap<String, TTSCacheEntry> ttsCache = new ConcurrentHashMap<>();
     
@@ -88,8 +94,8 @@ public class TTSService {
             return new byte[0];
         }
         
-        if (!"aws-batch".equals(mode)) {
-            logger.warn("TTS mode is not set to aws-batch");
+        if (!"runpod".equals(mode) && !"aws-batch".equals(mode) && !"localhost".equals(mode)) {
+            logger.warn("TTS mode is not set to runpod, aws-batch, or localhost (current: {})", mode);
             return new byte[0];
         }
         
@@ -108,7 +114,16 @@ public class TTSService {
                        cleanText.length() > 50 ? cleanText.substring(0, 50) + "..." : cleanText);
             
             String filename = generateMessageKey(cleanText, voice);
-            String jobId = awsBatchService.submitTTSJob(cleanText, filename, voice);
+            String jobId;
+            
+            if ("runpod".equals(mode)) {
+                jobId = runPodService.submitTTSJob(cleanText, filename, voice);
+            } else if ("localhost".equals(mode)) {
+                // For localhost mode, directly use TTSServiceLocal
+                return ttsServiceLocal.generateSpeech(cleanText, voice);
+            } else {
+                jobId = awsBatchService.submitTTSJob(cleanText, filename, voice);
+            }
             
             if (jobId == null) {
                 logger.error("Failed to submit TTS job");
@@ -147,8 +162,15 @@ public class TTSService {
             return;
         }
         
-        if (!"aws-batch".equals(mode)) {
-            logger.warn("TTS mode is not set to aws-batch, skipping TTS processing");
+        if (!"runpod".equals(mode) && !"aws-batch".equals(mode) && !"localhost".equals(mode)) {
+            logger.warn("TTS mode is not set to runpod, aws-batch, or localhost (current: {}), skipping TTS processing", mode);
+            return;
+        }
+        
+        // For localhost mode, delegate entirely to TTSServiceLocal
+        if ("localhost".equals(mode)) {
+            logger.info("Delegating TTS processing to TTSServiceLocal for mode: {}", mode);
+            ttsServiceLocal.processAIMessageForTTSWithCallback(message, onTTSReady);
             return;
         }
         
@@ -191,10 +213,16 @@ public class TTSService {
         // Start new TTS generation
         CompletableFuture<String> ttsTask = CompletableFuture.supplyAsync(() -> {
             try {
-                logger.info("Generating TTS via AWS Batch for messageKey={}", messageKey);
+                logger.info("Generating TTS via {} for messageKey={}", mode, messageKey);
                 String cleanText = cleanTextForTTS(text);
                 
-                String jobId = awsBatchService.submitTTSJob(cleanText, messageKey, defaultVoice);
+                String jobId;
+                if ("runpod".equals(mode)) {
+                    jobId = runPodService.submitTTSJob(cleanText, messageKey, defaultVoice);
+                } else {
+                    jobId = awsBatchService.submitTTSJob(cleanText, messageKey, defaultVoice);
+                }
+                // Note: localhost mode is handled earlier by delegation to TTSServiceLocal
                 if (jobId != null) {
                     String audioUrl = waitForTTSJobCompletion(jobId, messageKey);
                     if (audioUrl != null) {
@@ -205,7 +233,7 @@ public class TTSService {
                     }
                 }
                 
-                logger.warn("TTS generation failed via AWS Batch for messageKey={}", messageKey);
+                logger.warn("TTS generation failed via {} for messageKey={}", mode, messageKey);
                 return null;
                 
             } catch (Exception e) {
@@ -242,19 +270,34 @@ public class TTSService {
             long maxWaitTime = timeoutMs;
             
             while (System.currentTimeMillis() - startTime < maxWaitTime) {
-                String status = awsBatchService.getJobStatus(jobId);
+                String status;
+                String audioUrl = null;
                 
-                if ("SUCCEEDED".equals(status)) {
-                    JobDetail jobDetail = awsBatchService.getJobDetails(jobId);
-                    String audioUrl = extractAudioUrlFromJob(jobDetail, filename);
+                if ("runpod".equals(mode)) {
+                    status = runPodService.getTTSJobStatus(jobId);
                     
-                    if (audioUrl != null) {
-                        long duration = System.currentTimeMillis() - startTime;
-                        logger.info("TTS generation completed in {}ms - URL: {}", duration, audioUrl);
-                        return audioUrl;
+                    if ("COMPLETED".equals(status)) {
+                        // Get job result from RunPod
+                        com.fasterxml.jackson.databind.JsonNode result = runPodService.getTTSJobResult(jobId);
+                        if (result != null && result.has("audio_url")) {
+                            audioUrl = result.get("audio_url").asText();
+                        }
+                    }
+                } else {
+                    status = awsBatchService.getJobStatus(jobId);
+                    
+                    if ("SUCCEEDED".equals(status)) {
+                        JobDetail jobDetail = awsBatchService.getJobDetails(jobId);
+                        audioUrl = extractAudioUrlFromJob(jobDetail, filename);
                     }
                 }
-                else if ("FAILED".equals(status)) {
+                
+                if (audioUrl != null && ("SUCCEEDED".equals(status) || "COMPLETED".equals(status))) {
+                    long duration = System.currentTimeMillis() - startTime;
+                    logger.info("TTS generation completed in {}ms - URL: {}", duration, audioUrl);
+                    return audioUrl;
+                }
+                else if ("FAILED".equals(status) || "ERROR".equals(status)) {
                     logger.error("TTS job failed (jobId: {})", jobId);
                     return null;
                 }

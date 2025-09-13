@@ -62,17 +62,30 @@
             <version>2.2.0</version>
         </dependency>
         
-        <!-- JPA for database operations -->
-        <dependency>
+        <!-- JPA for database operations - REMOVED FOR DYNAMODB MIGRATION -->
+        <!-- <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
+        </dependency> -->
         
-        <!-- MariaDB driver -->
-        <dependency>
+        <!-- MariaDB driver - REMOVED FOR DYNAMODB MIGRATION -->
+        <!-- <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
             <scope>runtime</scope>
+        </dependency> -->
+        
+        <!-- DynamoDB Enhanced Client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb-enhanced</artifactId>
+            <version>2.20.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb</artifactId>
+            <version>2.20.0</version>
         </dependency>
         
         <!-- MinIO client for object storage -->

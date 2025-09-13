@@ -1,6 +1,7 @@
 package com.meshiya.service;
 
 import com.meshiya.dto.ChatMessage;
+import com.meshiya.dto.UserProfile;
 import com.meshiya.model.MessageType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +30,9 @@ public class ChatService {
     
     @Autowired
     private RoomTVService roomTVService;
+    
+    @Autowired
+    private UserService userService;
 
     public ChatMessage processMessage(ChatMessage message) {
         if (message.getType() == MessageType.CHAT_MESSAGE) {
@@ -37,6 +41,25 @@ public class ChatService {
             // Check for TV command
             String content = message.getContent();
             if (content != null && content.trim().startsWith("/play ")) {
+                // Restrict /play command to registered users only
+                UserProfile userProfile = userService.getUserProfile(message.getUserId());
+                if (userProfile == null || !userProfile.isRegistered()) {
+                    logger.warn("Guest user '{}' (userId: {}) attempted to use /play command - access denied", 
+                               message.getUserName(), message.getUserId());
+                    
+                    // Create error response message
+                    ChatMessage errorMessage = new ChatMessage();
+                    errorMessage.setType(MessageType.SYSTEM_MESSAGE);
+                    errorMessage.setContent("Video sharing is only available to registered users. Please create an account to share videos with others.");
+                    errorMessage.setUserName("System");
+                    errorMessage.setUserId("system");
+                    errorMessage.setRoomId(message.getRoomId());
+                    errorMessage.setSeatId(message.getSeatId());
+                    errorMessage.setTimestamp(java.time.LocalDateTime.now());
+                    
+                    return errorMessage;
+                }
+                
                 logger.info("Processing TV play command from {}: {}", message.getUserName(), content);
                 return roomTVService.processPlayCommand(message);
             }

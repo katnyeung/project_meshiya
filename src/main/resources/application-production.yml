@@ -2,20 +2,20 @@ server:
   port: 8080
 
 spring:
-  # Database Configuration (Production)
-  datasource:
-    url: jdbc:mariadb://meshiya-db.cd8qake2a3w4.eu-west-2.rds.amazonaws.com:3306/meshiya
-    username: ${DB_USERNAME:meshiyauser}
-    password: ${DB_PASSWORD}
+  # Database Configuration (Production) - Disabled for DynamoDB migration
+  # datasource:
+  #   url: jdbc:mariadb://meshiya-db.cd8qake2a3w4.eu-west-2.rds.amazonaws.com:3306/meshiya
+  #   username: ${DB_USERNAME:meshiyauser}
+  #   password: ${DB_PASSWORD}
   
-  # JPA Configuration
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.MariaDBDialect
+  # JPA Configuration - Disabled for DynamoDB migration
+  # jpa:
+  #   hibernate:
+  #     ddl-auto: update
+  #   show-sql: false
+  #   properties:
+  #     hibernate:
+  #       dialect: org.hibernate.dialect.MariaDBDialect
   
   data:
     redis:
@@ -59,26 +59,41 @@ minio:
     tts: meshiya-tts-audio
     food-images: meshiya-food-images
 
-# Image Generation Configuration (now using AWS Batch)
+# DynamoDB Configuration
+dynamodb:
+  table:
+    name: ${DYNAMODB_TABLE_NAME:meshiya-data}
+    region: ${AWS_REGION:eu-west-2}
+
+# RunPod Configuration (GPU processing alternative to AWS Batch)
+runpod:
+  api:
+    key: ${RUNPOD_API_KEY:}  # RunPod API key from environment
+  image:
+    endpoint: ${RUNPOD_IMAGE_ENDPOINT:}  # RunPod image generation endpoint URL
+  tts:
+    endpoint: ${RUNPOD_TTS_ENDPOINT:}  # RunPod TTS endpoint URL
+
+# Image Generation Configuration (supports both AWS Batch and RunPod)
 image:
   generation:
     enabled: true
-    mode: aws-batch
-    timeout: 300000
+    mode: ${IMAGE_MODE:runpod}  # Options: aws-batch, runpod
+    timeout: 300000  # 5 minutes timeout for jobs
   storage:
     type: s3
 
-# TTS Configuration (now using AWS Batch)
+# TTS Configuration (supports both AWS Batch and RunPod)
 tts:
-  mode: aws-batch
-  timeout: 120000
-  format: mp3
+  mode: ${TTS_MODE:runpod}  # Options: aws-batch, runpod
+  timeout: 120000  # 2 minutes timeout for jobs
+  format: mp3  # Audio format
   voice:
-    default: ${TTS_DEFAULT_VOICE:am_michael}
-  enabled: ${TTS_ENABLED:true}
+    default: ${TTS_DEFAULT_VOICE:am_michael}  # Default voice for Master responses
+  enabled: ${TTS_ENABLED:true}  # Enable/disable TTS functionality
   storage:
     type: s3
-    ttl-hours: 2
+    ttl-hours: 2  # Audio files expire after 2 hours
 
 # LLM Configuration
 llm:
